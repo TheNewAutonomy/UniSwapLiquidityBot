@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.10.35122.118
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UniSwapTradingBot", "UniSwapTradingBot\UniSwapTradingBot.csproj", "{A493F462-4FB9-46A7-A057-9D5067C194EE}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A493F462-4FB9-46A7-A057-9D5067C194EE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A493F462-4FB9-46A7-A057-9D5067C194EE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A493F462-4FB9-46A7-A057-9D5067C194EE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A493F462-4FB9-46A7-A057-9D5067C194EE}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {EA21803C-8C7E-4197-8C93-20A8C939CE86}
+	EndGlobalSection
+EndGlobal
