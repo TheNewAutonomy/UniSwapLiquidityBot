@@ -9,6 +9,8 @@ using Microsoft.Azure.WebJobs.Extensions.DurableTask;
 using Nethereum.Web3;
 using Nethereum.Web3.Accounts;
 using System.Threading;
+using System.Numerics;
+using UniSwapTradingBot.ContractHelpers;
 
 namespace UniSwapTradingBot
 {
@@ -33,29 +35,54 @@ namespace UniSwapTradingBot
             {
                 var url = Environment.GetEnvironmentVariable("ETH_NODE_URL");
                 var privateKey = Environment.GetEnvironmentVariable("ETH_PRIVATE_KEY");
+                var walletAddress = Environment.GetEnvironmentVariable("WALLET_ADDRESS");
+                decimal upperTickerPercent = 10;
+                decimal lowerTickerPercent = 10;
+                decimal.TryParse(Environment.GetEnvironmentVariable("UPPER_TICKER_PERCENT"), out upperTickerPercent);
+                decimal.TryParse(Environment.GetEnvironmentVariable("LOWER_TICKER_PERCENT"), out lowerTickerPercent);
+
+                BigInteger positionId = BigInteger.Parse(Environment.GetEnvironmentVariable("INITIAL_POSITION_ID"));
                 var account = new Account(privateKey);
                 var web3 = new Web3(account, url);
 
                 // Placeholder: Fetch current pool price and calculate thresholds
-                var currentPrice = await UniswapV3Helper.GetCurrentPoolPrice(web3);
-                var minPriceThreshold = 100; // Example value. Should be derived from percentrage of tolerance, defined by the user.
-                var maxPriceThreshold = 200; // Example value. Should be derived from percentrage of tolerance, defined by the user.
+                var currentPrice = await UniswapV3PriceHelper.GetCurrentPoolPrice(web3);
+                var minPriceThreshold = currentPrice - (currentPrice * upperTickerPercent);
+                var maxPriceThreshold = currentPrice + (currentPrice * upperTickerPercent);
 
-                // Determine trade action based on price thresholds
-                if (currentPrice < minPriceThreshold)
+                // Retrieve position
+                var position = await UniswapV3PositionHelper.GetPosition(web3, positionId);
+
+                if (position.TickLower <= minPriceThreshold || position.TickUpper >= maxPriceThreshold)
                 {
-                    // Buy token logic
-                    var amountToBuy = CalculateAmountToBuy(currentPrice);
-                    await ExecuteBuyTrade(web3, amountToBuy, log);
-                }
-                else if (currentPrice > maxPriceThreshold)
-                {
-                    // Sell token logic
-                    var amountToSell = CalculateAmountToSell(currentPrice);
-                    await ExecuteSellTrade(web3, amountToSell, log);
+                    // 1. Remove all liquidity from the position. We will have to wait until the transaction is confirmed.
+                    var cancellationTokenSource = new CancellationTokenSource();
+                    var cancellationToken = cancellationTokenSource.Token;
+
+                    await UniswapV3LiquidityHelper.RemoveLiquidity(web3, positionId, cancellationToken, log);
+
+                    // 2. Calculate new position range.
+                    var newTickLower = (int)(currentPrice - (currentPrice * lowerTickerPercent));
+                    var newTickUpper = (int)(currentPrice + (currentPrice * upperTickerPercent));
+
+                    // 3. Calculate the new liquidity amount based on the new tick range. This will be the amount of token 1 and token 2 to buy accounting for what I have in my wallet.
+                    var token0Address = Environment.GetEnvironmentVariable("TOKEN0_ADDRESS");
+                    var token1Address = Environment.GetEnvironmentVariable("TOKEN0_ADDRESS");
+                    decimal availableToken0 = await TokenHelper.GetAvailableToken(web3, walletAddress, token0Address);
+                    decimal availableToken1 = await TokenHelper.GetAvailableToken(web3, walletAddress, token1Address);
+                    var (amount0, amount1) = await UniswapV3NewPositionValueHelper.CalculateAmountsForNewPosition(
+                        web3, currentPrice, newTickLower, newTickUpper, availableToken0, availableToken1);
+
+                    log.LogInformation($"Amount of Token0 to buy: {amount0}, Amount of Token1 to buy: {amount1}");
+
+
+                    // 4. Buy token 1 and token 2 in preparation to fulfil the new position.
+
+                    // 5. Create a new position with the new tick range using the Uniswap V3 pool contract.
                 }
 
                 log.LogInformation("Executed trade at: " + DateTime.UtcNow);
+
             }
 
             static decimal CalculateAmountToBuy(decimal currentPrice)

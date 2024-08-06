@@ -5,7 +5,7 @@ using System.Numerics;
 using Nethereum.ABI.FunctionEncoding.Attributes;
 using System;
 
-public static class UniswapV3Helper
+public static class UniswapV3PriceHelper
 {
     private const string UNISWAP_V3_POOL_ABI = @"[
         {
