@@ -11,6 +11,7 @@ using Nethereum.Web3.Accounts;
 using System.Threading;
 using System.Numerics;
 using UniSwapTradingBot.ContractHelpers;
+using System.Collections.Generic;
 
 namespace UniSwapTradingBot
 {
@@ -75,8 +76,9 @@ namespace UniSwapTradingBot
 
                     log.LogInformation($"Amount of Token0 to buy: {amount0}, Amount of Token1 to buy: {amount1}");
 
-
                     // 4. Buy token 1 and token 2 in preparation to fulfil the new position.
+                    await ExecuteBuyTrade(web3, token0Address, amount0, log);
+                    await ExecuteBuyTrade(web3, token1Address, amount1, log);
 
                     // 5. Create a new position with the new tick range using the Uniswap V3 pool contract.
                 }
@@ -85,32 +87,36 @@ namespace UniSwapTradingBot
 
             }
 
-            static decimal CalculateAmountToBuy(decimal currentPrice)
+            static async Task ExecuteBuyTrade(Web3 web3, string tokenAddress, decimal amount, ILogger log)
             {
-                // Placeholder logic to calculate the amount of token to buy
-                return 1m; // Example amount
-            }
+                // Placeholder logic to interact with Uniswap V3 to perform the swap
+                // This requires integrating with the Uniswap V3 router contract
 
-            static decimal CalculateAmountToSell(decimal currentPrice)
-            {
-                // Placeholder logic to calculate the amount of token to sell
-                return 1m; // Example amount
-            }
+                var routerAddress = Environment.GetEnvironmentVariable("UNISWAP_V3_ROUTER_ADDRESS");
+                var account = web3.TransactionManager.Account.Address;
 
-            static async Task ExecuteBuyTrade(Web3 web3, decimal amount, ILogger log)
-            {
-                // Placeholder function to execute a buy trade
-                // This should be replaced with actual logic to interact with Uniswap pool and execute the trade
-                log.LogInformation($"Buying {amount} tokens at the current price.");
-                await Task.CompletedTask;
-            }
+                var swapRouterService = new SwapRouterService(web3, routerAddress);
 
-            static async Task ExecuteSellTrade(Web3 web3, decimal amount, ILogger log)
-            {
-                // Placeholder function to execute a sell trade
-                // This should be replaced with actual logic to interact with Uniswap pool and execute the trade
-                log.LogInformation($"Selling {amount} tokens at the current price.");
-                await Task.CompletedTask;
+                // Define the swap parameters
+                ulong deadline = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 600; // 10 minutes from now
+                var amountIn = Web3.Convert.ToWei(amount);
+                var path = new List<string> { tokenAddress, Environment.GetEnvironmentVariable("WETH_ADDRESS") }; // Adjust the path as needed
+                var to = account;
+
+                // Swap function call
+                var swapTxn = await swapRouterService.ExactInputSingle(new ExactInputSingleParams
+                {
+                    TokenIn = Environment.GetEnvironmentVariable("WETH_ADDRESS"),
+                    TokenOut = tokenAddress,
+                    Fee = 3000, // pool fee
+                    Recipient = to,
+                    Deadline = deadline,
+                    AmountIn = (decimal)amountIn,
+                    AmountOutMinimum = 1, // Setting this to 1 for simplicity, should be calculated based on slippage tolerance
+                    SqrtPriceLimitX96 = 0 // No price limit
+                });
+
+                log.LogInformation($"Executed swap for {amount} of token at address {tokenAddress} with txn: {swapTxn}");
             }
 
             [FunctionName("TradingBot_HttpStart")]
