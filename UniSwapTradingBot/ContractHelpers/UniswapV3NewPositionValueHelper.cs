@@ -9,6 +9,31 @@ namespace UniSwapTradingBot.ContractHelpers
 {
     public static class UniswapV3NewPositionValueHelper
     {
+        /*
+        Steps to Calculate the Amount of Tokens
+        Get the Current Reserves: Get the current reserves of token0 and token1 in the pool.
+        Calculate the Price Bounds: Determine the lower and upper price bounds for the new position.
+        Calculate the Amounts of Token0 and Token1: Use the Uniswap V3 formulas to calculate the required amounts of each token to provide liquidity within the given price range.
+
+        Uniswap V3 Liquidity Math
+        The key formulas to use are:
+
+        Liquidity (L):
+
+        L = amount0 * √P current * √P upper
+            --------------------------------
+                 √P upper - √ P lower
+
+
+        L =       amount1
+             -------------------
+             √P upper - √P lower
+
+        Where:
+        P current is the current price.
+        P upper and P lower are the upper and lower price bounds.
+        √P is the square root of the price
+         */
         public static async Task<(decimal amount0, decimal amount1)> CalculateAmountsForNewPosition(
             Web3 web3,
             decimal currentPrice,
