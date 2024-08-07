@@ -49,7 +49,6 @@ namespace UniSwapTradingBot
                 decimal.TryParse(envVariables["LOWER_TICKER_PERCENT"], out LowerTickerPercent);
                 PositionId = BigInteger.Parse(envVariables["INITIAL_POSITION_ID"]);
 
-
                 // Call the trading bot logic function
                 await context.CallActivityAsync("TradingBot_ExecuteTrade", null);
 

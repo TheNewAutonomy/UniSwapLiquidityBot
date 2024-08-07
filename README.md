@@ -42,7 +42,7 @@ The new position is calculated as followws:
         P current is the current price.
         P upper and P lower are the upper and lower price bounds.
         √P is the square root of the price
-        ```
+```
 
 This version of the bot still requires the user to configure the position limits and so there is an element of fine tuning the bot based on risk/return appetite.
 
@@ -50,3 +50,6 @@ This version of the bot still requires the user to configure the position limits
 The next version of the bot will include an AI model to predict the optimal position limits based on the current market conditions. This will allow the bot to be fully automated and require no user input.
 
 It will also support multiple positions and multiple pools to allow for a more diversified portfolio. This will also allow the bot to be more resilient to market changes and to optimise returns further by having multiple pots around a central position as set out in the Harvard paper.
+
+## Installation
+Installation requires an active Azure subscription and SQL Azure database for storing configuration data and positions.
