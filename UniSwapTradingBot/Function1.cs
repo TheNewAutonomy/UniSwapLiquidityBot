@@ -38,15 +38,15 @@ namespace UniSwapTradingBot
             {
                 var envVariables = await context.CallActivityAsync<Dictionary<string, string>>("GetEnvironmentVariables", null);
 
-                EthNodeUrl = envVariables["ETH_NODE_URL"];
+                EthNodeUrl = envVariables["https://rpc-mumbai.maticvigil.com/"]; // Polygon Mumbai Testnet
                 PrivateKey = envVariables["ETH_PRIVATE_KEY"];
                 WalletAddress = envVariables["WALLET_ADDRESS"];
-                Token0Address = envVariables["TOKEN0_ADDRESS"];
-                Token1Address = envVariables["TOKEN1_ADDRESS"];
-                WethAddress = envVariables["WETH_ADDRESS"];
-                UniswapV3RouterAddress = envVariables["UNISWAP_V3_ROUTER_ADDRESS"];
-                decimal.TryParse(envVariables["UPPER_TICKER_PERCENT"], out UpperTickerPercent);
-                decimal.TryParse(envVariables["LOWER_TICKER_PERCENT"], out LowerTickerPercent);
+                Token0Address = envVariables["0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619"];  // WETH
+                Token1Address = envVariables["0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"];  // USDC
+                WethAddress = envVariables["0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619"];
+                UniswapV3RouterAddress = envVariables["0xE592427A0AEce92De3Edee1F18E0157C05861564"]; // Polygon Mumbai Testnet
+                decimal.TryParse(envVariables["0.3"], out UpperTickerPercent);
+                decimal.TryParse(envVariables["0.3"], out LowerTickerPercent);
                 PositionId = BigInteger.Parse(envVariables["INITIAL_POSITION_ID"]);
 
                 // Call the trading bot logic function
