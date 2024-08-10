@@ -64,7 +64,7 @@ namespace UniSwapTradingBot
             var account = new Account(PrivateKey);
             var web3 = new Web3(account, EthNodeUrl);
 
-            // Placeholder: Fetch current pool price and calculate thresholds
+            // 1. Fetch current pool price and calculate thresholds
             var currentPrice = await UniswapV3PriceHelper.GetCurrentPoolPrice(web3);
             var minPriceThreshold = currentPrice * (1 - (LowerTickerPercent / 100));
             var maxPriceThreshold = currentPrice * (1 + (UpperTickerPercent / 100));
@@ -74,7 +74,7 @@ namespace UniSwapTradingBot
 
             if (position.TickLower <= minPriceThreshold || position.TickUpper >= maxPriceThreshold)
             {
-                // 1. Remove all liquidity from the position. We will have to wait until the transaction is confirmed.
+                // 2. Remove all liquidity from the position.
                 var liquidityRemover = new LiquidityRemover(web3, log);
                 CancellationTokenSource cts = new CancellationTokenSource();
 
@@ -93,11 +93,11 @@ namespace UniSwapTradingBot
                     throw;
                 }
 
-                // 2. Calculate new position range.
+                // 3. Calculate new position range.
                 var newTickLower = (int)(currentPrice - (currentPrice * LowerTickerPercent));
                 var newTickUpper = (int)(currentPrice + (currentPrice * UpperTickerPercent));
 
-                // 3. Calculate the new liquidity amount based on the new tick range. This will be the amount of token 1 and token 2 to buy accounting for what I have in my wallet.
+                // 4. Calculate the new liquidity amount based on the new tick range. This will be the amount of token 1 and token 2 to buy accounting for what I have in my wallet.
                 decimal availableToken0 = await TokenHelper.GetAvailableToken(web3, WalletAddress, Token0Address);
                 decimal availableToken1 = await TokenHelper.GetAvailableToken(web3, WalletAddress, Token1Address);
                 var (amount0, amount1) = await UniswapV3NewPositionValueHelper.CalculateAmountsForNewPosition(
@@ -105,13 +105,17 @@ namespace UniSwapTradingBot
 
                 log.LogInformation($"Amount of Token0 to buy: {amount0}, Amount of Token1 to buy: {amount1}");
 
-                // 4. Buy token 1 and token 2 in preparation to fulfil the new position.
+                // 5. We know how much of token0 and token1 we have and 
+                var (amountToBuy, tokenToBuy) = UniswapV3NewPositionValueHelper.DetermineTokenPurchase(amount0, amount1, availableToken0, availableToken1);
+
+
+                // 5. Buy the required token amount to create the position
                 try
                 {
-                    await ExecuteBuyTrade(web3, Token0Address, amount0, log);
-                    await ExecuteBuyTrade(web3, Token1Address, amount1, log);
+                    string tokenToSell = tokenToBuy == Token0Address ? Token1Address : Token0Address;
+                    await ExecuteBuyTrade(web3, tokenToBuy, amountToBuy, tokenToSell, log);
 
-                    // 5. Create a new position with the new tick range using the Uniswap V3 pool contract.
+                    // 6. Create a new position with the new tick range using the Uniswap V3 pool contract.
                     await CreateNewPosition(web3, newTickLower, newTickUpper, amount0, amount1, log).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
@@ -128,7 +132,7 @@ namespace UniSwapTradingBot
             }
         }
 
-        static async Task ExecuteBuyTrade(Web3 web3, string tokenAddress, decimal amount, ILogger log)
+        static async Task ExecuteBuyTrade(Web3 web3, string tokenAddress, decimal amount, string tokenToSell, ILogger log)
         {
             // Placeholder logic to interact with Uniswap V3 to perform the swap
             // This requires integrating with the Uniswap V3 router contract

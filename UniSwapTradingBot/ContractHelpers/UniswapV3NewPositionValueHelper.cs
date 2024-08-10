@@ -60,5 +60,32 @@ namespace UniSwapTradingBot.ContractHelpers
 
             return (amount0, amount1);
         }
+
+        public static (decimal amountToBuy, string tokenToBuy) DetermineTokenPurchase(
+    decimal requiredAmount0, decimal requiredAmount1,
+    decimal availableAmount0, decimal availableAmount1)
+        {
+            decimal deficit0 = requiredAmount0 - availableAmount0;
+            decimal deficit1 = requiredAmount1 - availableAmount1;
+
+            if (deficit0 > 0 && deficit1 <= 0)
+            {
+                return (deficit0, "token0");
+            }
+            else if (deficit1 > 0 && deficit0 <= 0)
+            {
+                return (deficit1, "token1");
+            }
+            else if (deficit0 > 0 && deficit1 > 0)
+            {
+                // You need to buy both tokens
+                return (deficit0, "token0");  // or deficit1, "token1", depending on your strategy
+            }
+            else
+            {
+                // No need to buy anything, or consider selling excess if needed
+                return (0, "none");
+            }
+        }
     }
 }
