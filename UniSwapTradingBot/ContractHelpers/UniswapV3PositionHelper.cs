@@ -31,7 +31,7 @@ public static class UniswapV3PositionHelper
         }
     ]";
 
-    private const string POSITION_MANAGER_ADDRESS = "0xNONFUNGIBLE_POSITION_MANAGER_CONTRACT_ADDRESS";
+    private const string POSITION_MANAGER_ADDRESS = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88";
 
     public static async Task<Position> GetPosition(Web3 web3, BigInteger tokenId)
     {
@@ -42,6 +42,7 @@ public static class UniswapV3PositionHelper
         return position;
     }
 
+    [FunctionOutputAttribute]
     public class Position
     {
         [Parameter("uint96", "nonce", 1)]
