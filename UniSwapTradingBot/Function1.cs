@@ -132,37 +132,47 @@ namespace UniSwapTradingBot
             }
         }
 
-        static async Task ExecuteBuyTrade(Web3 web3, string tokenAddress, decimal amount, string tokenToSell, ILogger log)
+        static async Task ExecuteBuyTrade(Web3 web3, string tokenToBuyAddress, decimal amountToBuy, string tokenToSellAddress, ILogger log)
         {
-            // Placeholder logic to interact with Uniswap V3 to perform the swap
-            // This requires integrating with the Uniswap V3 router contract
-
-            var routerAddress = UniswapV3RouterAddress;
-            var account = web3.TransactionManager.Account.Address;
-
-            var swapRouterService = new SwapRouterService(web3, routerAddress);
-
-            // Define the swap parameters
-            ulong deadline = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 600; // 10 minutes from now
-            var amountIn = Web3.Convert.ToWei(amount);
-            var path = new List<string> { tokenAddress, WethAddress }; // Adjust the path as needed
-            var to = account;
-
-            // Swap function call
-            var swapTxn = await swapRouterService.ExactInputSingle(new ExactInputSingleParams
+            try
             {
-                TokenIn = WethAddress,
-                TokenOut = tokenAddress,
-                Fee = 3000, // pool fee
-                Recipient = to,
-                Deadline = deadline,
-                AmountIn = (decimal)amountIn,
-                AmountOutMinimum = 1, // Setting this to 1 for simplicity, should be calculated based on slippage tolerance
-                SqrtPriceLimitX96 = 0 // No price limit
-            });
+                var routerAddress = UniswapV3RouterAddress;
+                var swapRouterService = new SwapRouterService(web3, routerAddress);
 
-            log.LogInformation($"Executed swap for {amount} of token at address {tokenAddress} with txn: {swapTxn}");
+                // Define the swap parameters
+                ulong deadline = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 600; // 10 minutes from now
+                var amountOut = Web3.Convert.ToWei(amountToBuy); // The exact amount of the token to buy
+                var path = new List<string> { tokenToSellAddress, tokenToBuyAddress }; // Path for the swap, direct pair assumed
+                var account = web3.TransactionManager.Account.Address;
+
+                // Get the current price of tokenToSell in terms of tokenToBuy to calculate amountIn
+                var currentPrice = await UniswapV3PriceHelper.GetPriceOfTokenPair(web3, tokenToSellAddress, tokenToBuyAddress);
+                var amountIn = Web3.Convert.ToWei(amountToBuy / currentPrice);
+
+                log.LogInformation($"Swapping {amountIn} of {tokenToSellAddress} to buy {amountOut} of {tokenToBuyAddress}");
+
+                // Execute the swap
+                var swapTxn = await swapRouterService.ExactInputSingle(new ExactInputSingleParams
+                {
+                    TokenIn = tokenToSellAddress,
+                    TokenOut = tokenToBuyAddress,
+                    Fee = 3000, // pool fee
+                    Recipient = account,
+                    Deadline = deadline,
+                    AmountIn = (decimal)amountIn,
+                    AmountOutMinimum = 1, // Set to 1 for simplicity; should be based on slippage tolerance
+                    SqrtPriceLimitX96 = 0 // No price limit
+                });
+
+                log.LogInformation($"Executed swap for {amountToBuy} of {tokenToBuyAddress} using {amountIn} of {tokenToSellAddress}, transaction hash: {swapTxn}");
+            }
+            catch (Exception ex)
+            {
+                log.LogError($"Failed to execute swap: {ex.Message}");
+                throw;
+            }
         }
+
 
         private static async Task CreateNewPosition(Web3 web3, int tickLower, int tickUpper, decimal amount0, decimal amount1, ILogger log)
         {

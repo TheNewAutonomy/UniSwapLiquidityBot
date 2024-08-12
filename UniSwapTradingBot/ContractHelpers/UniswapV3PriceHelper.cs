@@ -76,4 +76,46 @@ public static class UniswapV3PriceHelper
         [Parameter("bool", "unlocked", 7)]
         public bool Unlocked { get; set; }
     }
+
+    public static async Task<decimal> GetPriceOfTokenPair(Web3 web3, string token0Address, string token1Address)
+    {
+        // Assuming you have the ABI and pool address for the Uniswap V3 pool contract
+        string poolAddress = await GetPoolAddress(web3, token0Address, token1Address);
+        var poolContract = web3.Eth.GetContract(UniswapV3PoolABI, poolAddress);
+
+        // Fetch the slot0 which contains the current price (sqrtPriceX96)
+        var slot0Function = poolContract.GetFunction("slot0");
+        var slot0 = await slot0Function.CallDeserializingToObjectAsync<Slot0Output>();
+
+        // Calculate the price from sqrtPriceX96
+        BigInteger sqrtPriceX96 = slot0.SqrtPriceX96;
+
+        // Convert BigInteger to decimal for the calculation
+        decimal sqrtPriceX96Decimal = (decimal)sqrtPriceX96;
+        decimal price = (sqrtPriceX96Decimal * sqrtPriceX96Decimal) / (decimal)(BigInteger.Pow(2, 192));
+
+        return price;
+    }
+
+    // This method assumes a function that retrieves the pool address based on the token pair
+    private static async Task<string> GetPoolAddress(Web3 web3, string token0Address, string token1Address)
+    {
+        var factoryContract = web3.Eth.GetContract(UniswapV3FactoryABI, UniswapV3FactoryAddress);
+        var getPoolFunction = factoryContract.GetFunction("getPool");
+        var poolAddress = await getPoolFunction.CallAsync<string>(token0Address, token1Address, 3000); // assuming fee tier of 0.3%
+        return poolAddress;
+    }
+
+    // Placeholder for the ABI of Uniswap V3 pool and factory contracts
+    private const string UniswapV3PoolABI = @"[...]"; // Replace with the actual ABI
+    private const string UniswapV3FactoryABI = @"[...]"; // Replace with the actual ABI
+    private const string UniswapV3FactoryAddress = "0x..."; // Replace with the actual Uniswap V3 factory address
+
+    // Class to represent the Slot0 output
+    public class Slot0Output
+    {
+        public BigInteger SqrtPriceX96 { get; set; }
+        public int Tick { get; set; }
+        // other fields as needed...
+    }
 }
