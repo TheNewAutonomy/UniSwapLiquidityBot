@@ -10,10 +10,15 @@ using Nethereum.Model;
 using Account = Nethereum.Web3.Accounts.Account;
 using Nethereum.Contracts.Standards.ERC20.TokenList;
 using Nethereum.BlockchainProcessing.BlockStorage.Entities;
+using Nethereum.ABI.FunctionEncoding.Attributes;
+using Nethereum.Hex.HexConvertors.Extensions;
+using Nethereum.RPC.Eth.DTOs;
+using static System.Runtime.InteropServices.JavaScript.JSType;
+using Nethereum.ABI.FunctionEncoding;
 
 public class LiquidityRemover
 {
-    private const string UniswapV3NFTPositionManagerAddress = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88";
+    private const string UniswapV3NFTPositionManagerAddress = "0xc36442b4a4522e871399cd717abdd847ab11fe88";
     private const string NONFUNGIBLE_POSITION_MANAGER_ABI = @"[
    {
       ""inputs"":[
@@ -1297,32 +1302,140 @@ public class LiquidityRemover
     {
         if (account == null) throw new ArgumentNullException(nameof(account));
 
-        var contract = _web3.Eth.GetContract(NONFUNGIBLE_POSITION_MANAGER_ABI, UniswapV3NFTPositionManagerAddress);
-        var burnFunction = contract.GetFunction("burn");
+        // 1. Decrease Liquidity to 0
+        await DecreaseLiquidityToZeroAsync(account, positionId, cancellationToken);
 
-        string transactionHash = string.Empty;
+        // 2. Collect all tokens
+        await CollectAllTokensAsync(account, positionId, cancellationToken);
+
+        // 3. Burn the NFT position
+        return await BurnPositionAsync(account, positionId, cancellationToken);
+    }
+
+    private async Task DecreaseLiquidityToZeroAsync(Account account, ulong positionId, CancellationToken cancellationToken)
+    {
+        var contract = _web3.Eth.GetContract(NONFUNGIBLE_POSITION_MANAGER_ABI, UniswapV3NFTPositionManagerAddress);
+        var decreaseLiquidityFunction = contract.GetFunction("decreaseLiquidity");
 
         try
         {
-            // Check if the user has enough funds and the contract call is valid
-            BigInteger gasEstimate;
-            try
+            // Fetch position details to get the current liquidity
+            var positionsFunction = contract.GetFunction("positions");
+
+            // Create the encoded function call data
+            var encodedData = positionsFunction.GetData(new BigInteger(positionId));
+
+            // Create a CallInput object
+            var callInput = new CallInput
             {
+                From = account.Address, // Optional: specify the sender address
+                To = UniswapV3NFTPositionManagerAddress,
+                Data = encodedData
+            };
 
-                gasEstimate = await burnFunction.EstimateGasAsync(account.Address, null, null, positionId);
+            // Send the raw call
+            var rawResponse = await _web3.Eth.Transactions.Call.SendRequestAsync(callInput);
 
-            }
-            catch (Exception ex)
+            var function = new FunctionCallDecoder();
+
+            // Decode the raw response into the Position class
+            var positionDetails = function.DecodeFunctionOutput<Position>(rawResponse);
+
+            if (positionDetails.Liquidity == 0)
             {
-                _logger.LogError($"Gas estimation failed: {ex.Message}. Possible reasons: insufficient funds, invalid parameters, or the contract call reverts.");
-                throw new InvalidOperationException("Failed to estimate gas. Ensure the positionId is correct, and your account has sufficient funds.", ex);
+                _logger.LogInformation("Position already has 0 liquidity.");
+                return;
             }
 
-            // Optional: Set a custom gas price (you can also let Web3 handle it)
+            // Get the current block's timestamp
+            var latestBlock = await _web3.Eth.Blocks.GetBlockWithTransactionsByNumber.SendRequestAsync(BlockParameter.CreateLatest());
+            var blockTimestamp = latestBlock.Timestamp.Value; // Block timestamp in seconds
+
+            // Set the deadline to the block time plus 10 minutes (600 seconds)
+            var deadline = new HexBigInteger(blockTimestamp + 600);
+
+            var decreaseLiquidityParams = new
+            {
+                tokenId = new HexBigInteger(positionId),
+                liquidity = new HexBigInteger(positionDetails.Liquidity), // Decrease all liquidity
+                amount0Min = new HexBigInteger(0), // Setting min amount to 0 to ensure full liquidity removal
+                amount1Min = new HexBigInteger(0),
+                deadline = deadline // 10 minutes from now
+            };
+
+            var canCall = await decreaseLiquidityFunction.CallAsync<bool>(account.Address, null, null, decreaseLiquidityParams);
+            if (!canCall)
+            {
+                throw new Exception("The transaction would revert. Check the parameters and contract state.");
+            }
+
+            var gasEstimate = await decreaseLiquidityFunction.EstimateGasAsync(account.Address, null, null, decreaseLiquidityParams);
             var gasPrice = await _web3.Eth.GasPrice.SendRequestAsync();
-            _logger.LogInformation($"Gas price: {gasPrice.Value} wei");
 
-            // Create the transaction input
+            var transactionInput = decreaseLiquidityFunction.CreateTransactionInput(
+                account.Address,
+                new HexBigInteger(gasEstimate),
+                new HexBigInteger(gasPrice),
+                new HexBigInteger(0), // No ETH value needs to be sent with the transaction
+                decreaseLiquidityParams
+            );
+
+            var signedTransaction = await _web3.Eth.TransactionManager.SignTransactionAsync(transactionInput);
+            var transactionHash = await _web3.Eth.Transactions.SendRawTransaction.SendRequestAsync(signedTransaction);
+
+            _logger.LogInformation($"Decrease Liquidity Transaction hash: {transactionHash}");
+            await WaitForTransactionReceiptAsync(transactionHash, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Failed to fetch position details: {ex.Message}");
+            throw;
+        }
+    }
+
+    private async Task CollectAllTokensAsync(Account account, ulong positionId, CancellationToken cancellationToken)
+    {
+        var contract = _web3.Eth.GetContract(NONFUNGIBLE_POSITION_MANAGER_ABI, UniswapV3NFTPositionManagerAddress);
+        var collectFunction = contract.GetFunction("collect");
+
+        var collectParams = new
+        {
+            tokenId = positionId,
+            recipient = account.Address,
+            amount0Max = BigInteger.Parse("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"), // Max possible value
+            amount1Max = BigInteger.Parse("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+        };
+
+        var gasEstimate = await collectFunction.EstimateGasAsync(account.Address, null, null, collectParams);
+        var gasPrice = await _web3.Eth.GasPrice.SendRequestAsync();
+
+        var transactionInput = collectFunction.CreateTransactionInput(
+            account.Address,
+            new HexBigInteger(gasEstimate),
+            new HexBigInteger(gasPrice),
+            new HexBigInteger(0), // No ETH value needs to be sent with the transaction
+            collectParams
+        );
+
+        var signedTransaction = await _web3.Eth.TransactionManager.SignTransactionAsync(transactionInput);
+        var transactionHash = await _web3.Eth.Transactions.SendRawTransaction.SendRequestAsync(signedTransaction);
+
+        _logger.LogInformation($"Collect Tokens Transaction hash: {transactionHash}");
+        await WaitForTransactionReceiptAsync(transactionHash, cancellationToken);
+    }
+
+    private async Task<string> BurnPositionAsync(Account account, ulong positionId, CancellationToken cancellationToken)
+    {
+        var contract = _web3.Eth.GetContract(NONFUNGIBLE_POSITION_MANAGER_ABI, UniswapV3NFTPositionManagerAddress);
+        var burnFunction = contract.GetFunction("burn");
+
+        string transactionHash;
+
+        try
+        {
+            var gasEstimate = await burnFunction.EstimateGasAsync(account.Address, null, null, positionId);
+            var gasPrice = await _web3.Eth.GasPrice.SendRequestAsync();
+
             var transactionInput = burnFunction.CreateTransactionInput(
                 account.Address,
                 new HexBigInteger(gasEstimate),
@@ -1332,25 +1445,17 @@ public class LiquidityRemover
             );
 
             var signedTransaction = await _web3.Eth.TransactionManager.SignTransactionAsync(transactionInput);
-
             transactionHash = await _web3.Eth.Transactions.SendRawTransaction.SendRequestAsync(signedTransaction);
-            Console.WriteLine($"Transaction hash: {transactionHash}");
-        }
-        catch (OperationCanceledException)
-        {
-            _logger.LogWarning("Operation was canceled.");
-            throw;
-        }
-        catch (InvalidOperationException ex)
-        {
-            _logger.LogError($"Operation failed: {ex.Message}");
-            throw;
+
+            _logger.LogInformation($"Burn Position Transaction hash: {transactionHash}");
         }
         catch (Exception ex)
         {
             _logger.LogError($"Failed to send burn transaction: {ex.Message}");
             throw;
         }
+
+        await WaitForTransactionReceiptAsync(transactionHash, cancellationToken);
 
         return transactionHash;
     }
@@ -1367,5 +1472,45 @@ public class LiquidityRemover
         }
 
         return receipt;
+    }
+
+    [FunctionOutputAttribute]
+    public class Position
+    {
+        [Parameter("uint96", "nonce", 1)]
+        public BigInteger Nonce { get; set; }
+
+        [Parameter("address", "operator", 2)]
+        public string Operator { get; set; }
+
+        [Parameter("address", "token0", 3)]
+        public string Token0 { get; set; }
+
+        [Parameter("address", "token1", 4)]
+        public string Token1 { get; set; }
+
+        [Parameter("uint24", "fee", 5)]
+        public BigInteger Fee { get; set; }
+
+        [Parameter("int24", "tickLower", 6)]
+        public int TickLower { get; set; }
+
+        [Parameter("int24", "tickUpper", 7)]
+        public int TickUpper { get; set; }
+
+        [Parameter("uint128", "liquidity", 8)]
+        public BigInteger Liquidity { get; set; }
+
+        [Parameter("uint256", "feeGrowthInside0LastX128", 9)]
+        public BigInteger FeeGrowthInside0LastX128 { get; set; }
+
+        [Parameter("uint256", "feeGrowthInside1LastX128", 10)]
+        public BigInteger FeeGrowthInside1LastX128 { get; set; }
+
+        [Parameter("uint128", "tokensOwed0", 11)]
+        public BigInteger TokensOwed0 { get; set; }
+
+        [Parameter("uint128", "tokensOwed1", 12)]
+        public BigInteger TokensOwed1 { get; set; }
     }
 }
