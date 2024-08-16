@@ -80,8 +80,7 @@ namespace UniSwapTradingBot
 
                 try
                 {
-                    string transactionHash = await liquidityRemover.RemoveLiquidityAsync(PrivateKey, account, PositionId, cts.Token);
-                    Console.WriteLine($"Transaction completed with hash: {transactionHash}");
+                    await liquidityRemover.RemoveLiquidityAsync(PrivateKey, account, PositionId, cts.Token);
                 }
                 catch (OperationCanceledException)
                 {
