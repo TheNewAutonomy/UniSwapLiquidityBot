@@ -19,6 +19,7 @@ using Nethereum.ABI.FunctionEncoding;
 public class LiquidityRemover
 {
     private const string UniswapV3NFTPositionManagerAddress = "0xc36442b4a4522e871399cd717abdd847ab11fe88";
+
     private const string NONFUNGIBLE_POSITION_MANAGER_ABI = @"[
    {
       ""inputs"":[
@@ -1312,10 +1313,57 @@ public class LiquidityRemover
         return await BurnPositionAsync(account, positionId, cancellationToken);
     }
 
+    private async Task<bool> IsApprovedForAllAsync(string owner, string operatorAddress)
+    {
+        var erc721Contract = _web3.Eth.GetContract(NONFUNGIBLE_POSITION_MANAGER_ABI, UniswapV3NFTPositionManagerAddress);
+        var isApprovedForAllFunction = erc721Contract.GetFunction("isApprovedForAll");
+
+        return await isApprovedForAllFunction.CallAsync<bool>(owner, operatorAddress);
+    }
+
+    private async Task ApprovePositionManagerAsync(Account account, ulong positionId)
+    {
+        var erc721Contract = _web3.Eth.GetContract(NONFUNGIBLE_POSITION_MANAGER_ABI, UniswapV3NFTPositionManagerAddress);
+        var approveFunction = erc721Contract.GetFunction("approve");
+
+        try
+        {
+            var gasEstimate = await approveFunction.EstimateGasAsync(account.Address, null, null, UniswapV3NFTPositionManagerAddress,positionId);
+            var gasPrice = await _web3.Eth.GasPrice.SendRequestAsync();
+
+            var transactionInput = approveFunction.CreateTransactionInput(
+                account.Address,
+                UniswapV3NFTPositionManagerAddress,
+                positionId
+            );
+
+            transactionInput.Gas = gasEstimate;
+            transactionInput.GasPrice = gasPrice;
+
+            var signedTransaction = await _web3.Eth.TransactionManager.SignTransactionAsync(transactionInput);
+            var transactionHash = await _web3.Eth.Transactions.SendRawTransaction.SendRequestAsync(signedTransaction);
+
+            _logger.LogInformation($"Approval Transaction hash: {transactionHash}");
+            await WaitForTransactionReceiptAsync(transactionHash, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Failed to approve position manager: {ex.Message}");
+            throw;
+        }
+    }
+
     private async Task DecreaseLiquidityToZeroAsync(Account account, ulong positionId, CancellationToken cancellationToken)
     {
         var contract = _web3.Eth.GetContract(NONFUNGIBLE_POSITION_MANAGER_ABI, UniswapV3NFTPositionManagerAddress);
         var decreaseLiquidityFunction = contract.GetFunction("decreaseLiquidity");
+
+        // Approve the position manager to operate the NFT if not already approved
+        var isApproved = await IsApprovedForAllAsync(account.Address, UniswapV3NFTPositionManagerAddress);
+        if (!isApproved)
+        {
+            await ApprovePositionManagerAsync(account, positionId);
+        }
 
         try
         {
