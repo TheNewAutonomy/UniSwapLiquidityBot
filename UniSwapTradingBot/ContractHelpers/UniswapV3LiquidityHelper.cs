@@ -1369,9 +1369,9 @@ public class LiquidityRemover
         try
         {
             // Get the current block's timestamp
-            // var latestBlock = await _web3.Eth.Blocks.GetBlockWithTransactionsByNumber.SendRequestAsync(BlockParameter.CreateLatest());
-            // var blockTimestamp = latestBlock.Timestamp.Value; // Block timestamp in seconds
-            var deadline = new HexBigInteger(DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 600); // 10 minutes from now
+            var latestBlock = await _web3.Eth.Blocks.GetBlockWithTransactionsByNumber.SendRequestAsync(BlockParameter.CreateLatest());
+            var deadline = latestBlock.Timestamp.Value + 600; // Block timestamp in seconds
+            // var deadline = new HexBigInteger(DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 600); // 10 minutes from now
 
             var decreaseLiquidityParams = new
             {
