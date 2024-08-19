@@ -24,7 +24,9 @@ namespace UniSwapTradingBot
         static decimal LowerTickerPercent = 10;
         static string WalletAddress = string.Empty;
         static string Token0Address = string.Empty;
+        static string Token0ProxyAddress = string.Empty;
         static string Token1Address = string.Empty;
+        static string Token1ProxyAddress = string.Empty;
         static string UniswapV3RouterAddress = string.Empty;
         static string UniswapV3PositionManagerAddress = string.Empty;
         static string UniswapV3FactoryAddress = string.Empty;
@@ -43,7 +45,9 @@ namespace UniSwapTradingBot
             PrivateKey = envVariables["ETH_PRIVATE_KEY"];
             WalletAddress = envVariables["WALLET_ADDRESS"];
             Token0Address = envVariables["TOKEN0_ADDRESS"];
+            Token0ProxyAddress = envVariables["TOKEN0_PROXY_ADDRESS"];
             Token1Address = envVariables["TOKEN1_ADDRESS"];
+            Token1ProxyAddress = envVariables["TOKEN1_PROXY_ADDRESS"];
             WethAddress = envVariables["WETH_ADDRESS"];
             UniswapV3RouterAddress = envVariables["UNISWAP_V3_ROUTER_ADDRESS"];
             decimal.TryParse(envVariables["UPPER_TICKER_PERCENT"], out UpperTickerPercent);
@@ -97,8 +101,8 @@ namespace UniSwapTradingBot
                 var newTickUpper = (int)(currentPrice + (currentPrice * UpperTickerPercent));
 
                 // 4. Calculate the new liquidity amount based on the new tick range. This will be the amount of token 1 and token 2 to buy accounting for what I have in my wallet.
-                decimal availableToken0 = await TokenHelper.GetAvailableToken(web3, WalletAddress, Token0Address);
-                decimal availableToken1 = await TokenHelper.GetAvailableToken(web3, WalletAddress, Token1Address);
+                decimal availableToken0 = await TokenHelper.GetAvailableTokenBalance(web3, Token0Address, Token0ProxyAddress, WalletAddress );
+                decimal availableToken1 = await TokenHelper.GetAvailableTokenBalance(web3, Token1Address, Token1ProxyAddress, WalletAddress);
                 var (amount0, amount1) = await UniswapV3NewPositionValueHelper.CalculateAmountsForNewPosition(
                     web3, currentPrice, newTickLower, newTickUpper, availableToken0, availableToken1);
 
@@ -212,7 +216,9 @@ namespace UniSwapTradingBot
                     { "ETH_PRIVATE_KEY", Environment.GetEnvironmentVariable("ETH_PRIVATE_KEY") },
                     { "WALLET_ADDRESS", Environment.GetEnvironmentVariable("WALLET_ADDRESS") },
                     { "TOKEN0_ADDRESS", Environment.GetEnvironmentVariable("TOKEN0_ADDRESS") },
+                    { "TOKEN0_PROXY_ADDRESS", Environment.GetEnvironmentVariable("TOKEN0_PROXY_ADDRESS") },
                     { "TOKEN1_ADDRESS", Environment.GetEnvironmentVariable("TOKEN1_ADDRESS") },
+                    { "TOKEN1_PROXY_ADDRESS", Environment.GetEnvironmentVariable("TOKEN1_PROXY_ADDRESS") },
                     { "WETH_ADDRESS", Environment.GetEnvironmentVariable("WETH_ADDRESS") },
                     { "UNISWAP_V3_ROUTER_ADDRESS", Environment.GetEnvironmentVariable("UNISWAP_V3_ROUTER_ADDRESS") },
                     { "UPPER_TICKER_PERCENT", Environment.GetEnvironmentVariable("UPPER_TICKER_PERCENT") },
