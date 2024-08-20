@@ -42,20 +42,34 @@ public static class TokenHelper
     ]";
 
     private static string PROXY_ABI = @"[
-    {
-        ""constant"": true,
-        ""inputs"": [],
-        ""name"": ""decimals"",
-        ""outputs"": [{""name"": """", ""type"": ""uint8""}],
-        ""type"": ""function""
-    }
-]";
+        {
+            ""constant"": true,
+            ""inputs"": [{""name"": ""_owner"", ""type"": ""address""}],
+            ""name"": ""balanceOf"",
+            ""outputs"": [{""name"": ""balance"", ""type"": ""uint256""}],
+            ""type"": ""function""
+        }
+    ]";
 
     public static async Task<int> GetTokenDecimals(Web3 web3, string tokenAddress)
     {
-        var contract = web3.Eth.GetContract(ERC20_ABI, tokenAddress);
-        var decimalsFunction = contract.GetFunction("decimals");
-        var decimals = await decimalsFunction.CallAsync<int>();
+        int decimals = 18;
+
+        switch (tokenAddress)
+        {
+            case "0xDD9185DB084f5C4fFf3b4f70E7bA62123b812226": // USDC.e (uses USDT contract)
+                decimals = 6;
+                break;
+            case "0x7FFB3d637014488b63fb9858E279385685AFc1e2": // WBTC
+                decimals = 8;
+                break;
+            default:
+                var contract = web3.Eth.GetContract(ERC20_ABI, tokenAddress);
+                var decimalsFunction = contract.GetFunction("decimals");
+                decimals = await decimalsFunction.CallAsync<int>();
+                break;
+        }
+
         return decimals;
     }
 
@@ -63,7 +77,7 @@ public static class TokenHelper
     {
         var decimals = await GetTokenDecimals(web3, tokenAddress);
 
-        var contract = web3.Eth.GetContract(ERC20_ABI, tokenAddress);
+        var contract = web3.Eth.GetContract(PROXY_ABI, proxyAddress);
         var balanceOfFunction = contract.GetFunction("balanceOf");
         var balance = await balanceOfFunction.CallAsync<BigInteger>(walletAddress);
 
