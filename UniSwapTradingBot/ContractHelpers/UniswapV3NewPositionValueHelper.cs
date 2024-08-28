@@ -2,64 +2,115 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using System.Text;
 using System.Threading.Tasks;
+using UniSwapTradingBot.Utilities;
 
 namespace UniSwapTradingBot.ContractHelpers
 {
     public static class UniswapV3NewPositionValueHelper
     {
-        /*
-        Steps to Calculate the Amount of Tokens
-        Get the Current Reserves: Get the current reserves of token0 and token1 in the pool.
-        Calculate the Price Bounds: Determine the lower and upper price bounds for the new position.
-        Calculate the Amounts of Token0 and Token1: Use the Uniswap V3 formulas to calculate the required amounts of each token to provide liquidity within the given price range.
-
-        Uniswap V3 Liquidity Math
-        The key formulas to use are:
-
-        Liquidity (L):
-
-        L = amount0 * √P current * √P upper
-            --------------------------------
-                 √P upper - √ P lower
-
-
-        L =       amount1
-             -------------------
-             √P upper - √P lower
-
-        Where:
-        P current is the current price.
-        P upper and P lower are the upper and lower price bounds.
-        √P is the square root of the price
-         */
-        public static async Task<(decimal amount0, decimal amount1)> CalculateAmountsForNewPosition(
-            Web3 web3,
-            decimal currentPrice,
-            decimal lowerPrice,
-            decimal upperPrice,
-            decimal availableToken0,
-            decimal availableToken1)
+        // Function to convert decimal to BigInteger scaled by 2^96
+        static BigInteger ConvertDecimalToBigIntegerWithScaling(decimal value, int scale)
         {
-            // Calculate sqrt prices
-            var sqrtPriceCurrent = (decimal)Math.Sqrt((double)currentPrice);
-            var sqrtPriceLower = (decimal)Math.Sqrt((double)lowerPrice);
-            var sqrtPriceUpper = (decimal)Math.Sqrt((double)upperPrice);
+            // Separate the integral and fractional parts
+            int[] bits = decimal.GetBits(value);
+            ulong low = (uint)bits[0];
+            ulong mid = (uint)bits[1];
+            ulong high = (uint)bits[2];
+            int exponent = (bits[3] >> 16) & 0xFF;
+            bool isNegative = (bits[3] & 0x80000000) != 0;
 
-            // Calculate liquidity amounts
-            var liquidityAmount0 = availableToken0 * sqrtPriceCurrent * sqrtPriceUpper / (sqrtPriceUpper - sqrtPriceLower);
-            var liquidityAmount1 = availableToken1 / (sqrtPriceUpper - sqrtPriceLower);
+            // Compute the integral part as BigInteger
+            BigInteger integral = new BigInteger((high << 32 | mid) << 32 | low);
+            if (isNegative)
+                integral = -integral;
 
-            // Determine the limiting factor (minimum liquidity that can be provided by token0 or token1)
-            var liquidity = Math.Min(liquidityAmount0, liquidityAmount1);
+            // Scale the integral part by 2^96
+            integral = integral * BigInteger.Pow(2, scale);
 
-            // Calculate the final amounts based on the liquidity
-            var amount0 = liquidity * (sqrtPriceUpper - sqrtPriceLower) / (sqrtPriceCurrent * sqrtPriceUpper);
-            var amount1 = liquidity * (sqrtPriceUpper - sqrtPriceLower);
+            // Compute the fractional part
+            decimal fractional = value - decimal.Truncate(value);
 
-            return (amount0, amount1);
+            // Convert the fractional part to BigInteger manually without overflow
+            BigInteger fractionalBigInt = 0;
+            for (int i = 0; i < scale; i++)
+            {
+                fractional *= 2;
+                if (fractional >= 1)
+                {
+                    fractionalBigInt += BigInteger.One << (scale - 1 - i);
+                    fractional -= 1;
+                }
+            }
+
+            // Combine integral and fractional parts
+            return integral + fractionalBigInt;
         }
+
+        public static async Task<(string tokenToSwap, decimal amountToSwap, decimal resultingAmount0, decimal resultingAmount1)> CalculateOptimalSwapForNewPosition(
+    Web3 web3,
+    decimal currentPrice,
+    int newTickLower,
+    int newTickUpper,
+    decimal availableToken0,
+    decimal availableToken1)
+        {
+            // Step 1: Calculate the dollar value of each token amount
+            decimal valueToken0InUSD = availableToken0 * currentPrice; // Value of Bitcoin in USD
+            decimal valueToken1InUSD = availableToken1; // Value of USDC in USD (1:1)
+
+            // Step 2: Calculate total value and target value for each token to achieve 50/50 balance
+            decimal totalValueInUSD = valueToken0InUSD + valueToken1InUSD;
+            decimal targetValuePerTokenInUSD = totalValueInUSD / 2;
+
+            string tokenToSwap = string.Empty;
+            decimal amountToSwap = 0m;
+            decimal optimalAmount0Decimal = availableToken0;
+            decimal optimalAmount1Decimal = availableToken1;
+
+            // Step 3: Determine which token needs to be swapped and by how much to achieve the target balance
+            if (valueToken0InUSD > targetValuePerTokenInUSD)
+            {
+                // We have more value in Token0 (Bitcoin) than desired, so we need to sell some of it
+                tokenToSwap = "Token0";
+
+                // Calculate how much Token0 (Bitcoin) to sell to reach target value
+                decimal excessValueInUSD = valueToken0InUSD - targetValuePerTokenInUSD;
+                amountToSwap = excessValueInUSD / currentPrice; // Amount of Token0 (Bitcoin) to sell
+
+                // Recalculate the resulting amounts after the swap
+                optimalAmount0Decimal = availableToken0 - amountToSwap;
+                optimalAmount1Decimal = availableToken1 + excessValueInUSD; // Receiving this amount in USD worth of Token1 (USDC)
+            }
+            else if (valueToken1InUSD > targetValuePerTokenInUSD)
+            {
+                // We have more value in Token1 (USDC) than desired, so we need to sell some of it
+                tokenToSwap = "Token1";
+
+                // Calculate how much Token1 (USDC) to sell to reach target value
+                decimal excessValueInUSD = valueToken1InUSD - targetValuePerTokenInUSD;
+                amountToSwap = excessValueInUSD; // Amount of Token1 (USDC) to sell (1:1 value)
+
+                // Recalculate the resulting amounts after the swap
+                optimalAmount0Decimal = availableToken0 + (excessValueInUSD / currentPrice); // Receiving this amount in Token0 (Bitcoin)
+                optimalAmount1Decimal = availableToken1 - amountToSwap;
+            }
+            else
+            {
+                // Already balanced, no swap needed
+                tokenToSwap = "None";
+                amountToSwap = 0m;
+            }
+
+            // Ensure non-negative amounts
+            optimalAmount0Decimal = Math.Max(optimalAmount0Decimal, 0);
+            optimalAmount1Decimal = Math.Max(optimalAmount1Decimal, 0);
+
+            return (tokenToSwap, amountToSwap, optimalAmount0Decimal, optimalAmount1Decimal);
+        }
+
 
         public static (decimal amountToBuy, string tokenToBuy) DetermineTokenPurchase(
     decimal requiredAmount0, decimal requiredAmount1,

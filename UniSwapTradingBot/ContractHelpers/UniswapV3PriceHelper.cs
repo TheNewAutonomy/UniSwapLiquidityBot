@@ -24,8 +24,248 @@ public static class UniswapV3PriceHelper
         }
     ]";
 
+    private const string UNISWAP_V3_POOL_FACTORY_ABI = @"[
+    {
+        ""inputs"": [],
+        ""stateMutability"": ""nonpayable"",
+        ""type"": ""constructor""
+    },
+    {
+        ""anonymous"": false,
+        ""inputs"": [
+            {
+                ""indexed"": true,
+                ""internalType"": ""uint24"",
+                ""name"": ""fee"",
+                ""type"": ""uint24""
+            },
+            {
+                ""indexed"": true,
+                ""internalType"": ""int24"",
+                ""name"": ""tickSpacing"",
+                ""type"": ""int24""
+            }
+        ],
+        ""name"": ""FeeAmountEnabled"",
+        ""type"": ""event""
+    },
+    {
+        ""anonymous"": false,
+        ""inputs"": [
+            {
+                ""indexed"": true,
+                ""internalType"": ""address"",
+                ""name"": ""oldOwner"",
+                ""type"": ""address""
+            },
+            {
+                ""indexed"": true,
+                ""internalType"": ""address"",
+                ""name"": ""newOwner"",
+                ""type"": ""address""
+            }
+        ],
+        ""name"": ""OwnerChanged"",
+        ""type"": ""event""
+    },
+    {
+        ""anonymous"": false,
+        ""inputs"": [
+            {
+                ""indexed"": true,
+                ""internalType"": ""address"",
+                ""name"": ""token0"",
+                ""type"": ""address""
+            },
+            {
+                ""indexed"": true,
+                ""internalType"": ""address"",
+                ""name"": ""token1"",
+                ""type"": ""address""
+            },
+            {
+                ""indexed"": true,
+                ""internalType"": ""uint24"",
+                ""name"": ""fee"",
+                ""type"": ""uint24""
+            },
+            {
+                ""indexed"": false,
+                ""internalType"": ""int24"",
+                ""name"": ""tickSpacing"",
+                ""type"": ""int24""
+            },
+            {
+                ""indexed"": false,
+                ""internalType"": ""address"",
+                ""name"": ""pool"",
+                ""type"": ""address""
+            }
+        ],
+        ""name"": ""PoolCreated"",
+        ""type"": ""event""
+    },
+    {
+        ""inputs"": [
+            {
+                ""internalType"": ""address"",
+                ""name"": ""tokenA"",
+                ""type"": ""address""
+            },
+            {
+                ""internalType"": ""address"",
+                ""name"": ""tokenB"",
+                ""type"": ""address""
+            },
+            {
+                ""internalType"": ""uint24"",
+                ""name"": ""fee"",
+                ""type"": ""uint24""
+            }
+        ],
+        ""name"": ""createPool"",
+        ""outputs"": [
+            {
+                ""internalType"": ""address"",
+                ""name"": ""pool"",
+                ""type"": ""address""
+            }
+        ],
+        ""stateMutability"": ""nonpayable"",
+        ""type"": ""function""
+    },
+    {
+        ""inputs"": [
+            {
+                ""internalType"": ""uint24"",
+                ""name"": ""fee"",
+                ""type"": ""uint24""
+            },
+            {
+                ""internalType"": ""int24"",
+                ""name"": ""tickSpacing"",
+                ""type"": ""int24""
+            }
+        ],
+        ""name"": ""enableFeeAmount"",
+        ""outputs"": [],
+        ""stateMutability"": ""nonpayable"",
+        ""type"": ""function""
+    },
+    {
+        ""inputs"": [
+            {
+                ""internalType"": ""uint24"",
+                ""name"": """",
+                ""type"": ""uint24""
+            }
+        ],
+        ""name"": ""feeAmountTickSpacing"",
+        ""outputs"": [
+            {
+                ""internalType"": ""int24"",
+                ""name"": """",
+                ""type"": ""int24""
+            }
+        ],
+        ""stateMutability"": ""view"",
+        ""type"": ""function""
+    },
+    {
+        ""inputs"": [
+            {
+                ""internalType"": ""address"",
+                ""name"": """",
+                ""type"": ""address""
+            },
+            {
+                ""internalType"": ""address"",
+                ""name"": """",
+                ""type"": ""address""
+            },
+            {
+                ""internalType"": ""uint24"",
+                ""name"": """",
+                ""type"": ""uint24""
+            }
+        ],
+        ""name"": ""getPool"",
+        ""outputs"": [
+            {
+                ""internalType"": ""address"",
+                ""name"": """",
+                ""type"": ""address""
+            }
+        ],
+        ""stateMutability"": ""view"",
+        ""type"": ""function""
+    },
+    {
+        ""inputs"": [],
+        ""name"": ""owner"",
+        ""outputs"": [
+            {
+                ""internalType"": ""address"",
+                ""name"": """",
+                ""type"": ""address""
+            }
+        ],
+        ""stateMutability"": ""view"",
+        ""type"": ""function""
+    },
+    {
+        ""inputs"": [],
+        ""name"": ""parameters"",
+        ""outputs"": [
+            {
+                ""internalType"": ""address"",
+                ""name"": ""factory"",
+                ""type"": ""address""
+            },
+            {
+                ""internalType"": ""address"",
+                ""name"": ""token0"",
+                ""type"": ""address""
+            },
+            {
+                ""internalType"": ""address"",
+                ""name"": ""token1"",
+                ""type"": ""address""
+            },
+            {
+                ""internalType"": ""uint24"",
+                ""name"": ""fee"",
+                ""type"": ""uint24""
+            },
+            {
+                ""internalType"": ""int24"",
+                ""name"": ""tickSpacing"",
+                ""type"": ""int24""
+            }
+        ],
+        ""stateMutability"": ""view"",
+        ""type"": ""function""
+    },
+    {
+        ""inputs"": [
+            {
+                ""internalType"": ""address"",
+                ""name"": ""_owner"",
+                ""type"": ""address""
+            }
+        ],
+        ""name"": ""setOwner"",
+        ""outputs"": [],
+        ""stateMutability"": ""nonpayable"",
+        ""type"": ""function""
+    }
+]";
+
     // Address of the Uniswap V3 pool contract
     private const string POOL_CONTRACT_ADDRESS = "0xeEF1A9507B3D505f0062f2be9453981255b503c8";
+
+    // Address of the Uniswap V3 pool factory contract
+    private const string POOL_FACTORY_CONTRACT_ADDRESS = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
 
     public static async Task<decimal> GetCurrentPoolPrice(Web3 web3)
     {
@@ -100,7 +340,7 @@ public static class UniswapV3PriceHelper
     // This method assumes a function that retrieves the pool address based on the token pair
     private static async Task<string> GetPoolAddress(Web3 web3, string token0Address, string token1Address)
     {
-        var factoryContract = web3.Eth.GetContract(UniswapV3FactoryABI, UniswapV3FactoryAddress);
+        var factoryContract = web3.Eth.GetContract(UNISWAP_V3_POOL_FACTORY_ABI, POOL_FACTORY_CONTRACT_ADDRESS);
         var getPoolFunction = factoryContract.GetFunction("getPool");
         var poolAddress = await getPoolFunction.CallAsync<string>(token0Address, token1Address, 3000); // assuming fee tier of 0.3%
         return poolAddress;

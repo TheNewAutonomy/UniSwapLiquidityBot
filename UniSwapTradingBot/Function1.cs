@@ -103,23 +103,20 @@ namespace UniSwapTradingBot
                 // 4. Calculate the new liquidity amount based on the new tick range. This will be the amount of token 1 and token 2 to buy accounting for what I have in my wallet.
                 decimal availableToken0 = await TokenHelper.GetAvailableTokenBalance(web3, Token0Address, Token0ProxyAddress, WalletAddress );
                 decimal availableToken1 = await TokenHelper.GetAvailableTokenBalance(web3, Token1Address, Token1ProxyAddress, WalletAddress);
-                var (amount0, amount1) = await UniswapV3NewPositionValueHelper.CalculateAmountsForNewPosition(
-                    web3, currentPrice, newTickLower, newTickUpper, availableToken0, availableToken1);
 
-                log.LogInformation($"Amount of Token0 to buy: {amount0}, Amount of Token1 to buy: {amount1}");
-
-                // 5. We know how much of token0 and token1 we have and 
-                var (amountToBuy, tokenToBuy) = UniswapV3NewPositionValueHelper.DetermineTokenPurchase(amount0, amount1, availableToken0, availableToken1);
-
+                var result = await UniswapV3NewPositionValueHelper.CalculateOptimalSwapForNewPosition(web3, currentPrice, newTickLower, newTickUpper, availableToken0, availableToken1);
 
                 // 5. Buy the required token amount to create the position
                 try
                 {
-                    string tokenToSell = tokenToBuy == Token0Address ? Token1Address : Token0Address;
+                    string tokenToSell = result.tokenToSwap == "Token0" ? Token0Address : Token1Address;
+                    string tokenToBuy = result.tokenToSwap == "Token0" ? Token1Address : Token0Address;
+                    decimal amountToBuy = result.amountToSwap;
+                
                     await ExecuteBuyTrade(web3, tokenToBuy, amountToBuy, tokenToSell, log);
 
                     // 6. Create a new position with the new tick range using the Uniswap V3 pool contract.
-                    await CreateNewPosition(web3, newTickLower, newTickUpper, amount0, amount1, log).ConfigureAwait(false);
+                    await CreateNewPosition(web3, newTickLower, newTickUpper, result.resultingAmount0, result.resultingAmount1, log).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
