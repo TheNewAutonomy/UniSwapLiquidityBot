@@ -49,13 +49,13 @@ namespace UniSwapTradingBot.ContractHelpers
             return integral + fractionalBigInt;
         }
 
-        public static async Task<(string tokenToSwap, decimal amountToSwap, decimal resultingAmount0, decimal resultingAmount1)> CalculateOptimalSwapForNewPosition(
-    Web3 web3,
-    decimal currentPrice,
-    int newTickLower,
-    int newTickUpper,
-    decimal availableToken0,
-    decimal availableToken1)
+        public static async Task<(string tokenToSwap, decimal amountToSell, decimal amountToBuy, decimal resultingAmount0, decimal resultingAmount1, decimal totalValueInUSD)> CalculateOptimalSwapForNewPosition(
+        Web3 web3,
+        decimal currentPrice,
+        int newTickLower,
+        int newTickUpper,
+        decimal availableToken0,
+        decimal availableToken1)
         {
             // Step 1: Calculate the dollar value of each token amount
             decimal valueToken0InUSD = availableToken0 * currentPrice; // Value of Bitcoin in USD
@@ -66,7 +66,8 @@ namespace UniSwapTradingBot.ContractHelpers
             decimal targetValuePerTokenInUSD = totalValueInUSD / 2;
 
             string tokenToSwap = string.Empty;
-            decimal amountToSwap = 0m;
+            decimal amountToSell = 0m;
+            decimal amountToBuy = 0m;
             decimal optimalAmount0Decimal = availableToken0;
             decimal optimalAmount1Decimal = availableToken1;
 
@@ -78,11 +79,16 @@ namespace UniSwapTradingBot.ContractHelpers
 
                 // Calculate how much Token0 (Bitcoin) to sell to reach target value
                 decimal excessValueInUSD = valueToken0InUSD - targetValuePerTokenInUSD;
-                amountToSwap = excessValueInUSD / currentPrice; // Amount of Token0 (Bitcoin) to sell
+                amountToSell = excessValueInUSD / currentPrice; // Amount of Token0 (Bitcoin) to sell
 
                 // Recalculate the resulting amounts after the swap
-                optimalAmount0Decimal = availableToken0 - amountToSwap;
+                optimalAmount0Decimal = availableToken0 - amountToSell;
                 optimalAmount1Decimal = availableToken1 + excessValueInUSD; // Receiving this amount in USD worth of Token1 (USDC)
+                                                                            // Ensure non-negative amounts
+                optimalAmount0Decimal = Math.Max(optimalAmount0Decimal, 0);
+                optimalAmount1Decimal = Math.Max(optimalAmount1Decimal, 0);
+
+                amountToBuy = optimalAmount1Decimal - availableToken1;
             }
             else if (valueToken1InUSD > targetValuePerTokenInUSD)
             {
@@ -91,30 +97,32 @@ namespace UniSwapTradingBot.ContractHelpers
 
                 // Calculate how much Token1 (USDC) to sell to reach target value
                 decimal excessValueInUSD = valueToken1InUSD - targetValuePerTokenInUSD;
-                amountToSwap = excessValueInUSD; // Amount of Token1 (USDC) to sell (1:1 value)
+                amountToSell = excessValueInUSD; // Amount of Token1 (USDC) to sell (1:1 value)
 
                 // Recalculate the resulting amounts after the swap
                 optimalAmount0Decimal = availableToken0 + (excessValueInUSD / currentPrice); // Receiving this amount in Token0 (Bitcoin)
-                optimalAmount1Decimal = availableToken1 - amountToSwap;
+                optimalAmount1Decimal = availableToken1 - amountToSell;
+
+                // Ensure non-negative amounts
+                optimalAmount0Decimal = Math.Max(optimalAmount0Decimal, 0);
+                optimalAmount1Decimal = Math.Max(optimalAmount1Decimal, 0);
+
+                amountToBuy = optimalAmount0Decimal - availableToken0;
             }
             else
             {
                 // Already balanced, no swap needed
                 tokenToSwap = "None";
-                amountToSwap = 0m;
+                amountToSell = 0m;
             }
 
-            // Ensure non-negative amounts
-            optimalAmount0Decimal = Math.Max(optimalAmount0Decimal, 0);
-            optimalAmount1Decimal = Math.Max(optimalAmount1Decimal, 0);
-
-            return (tokenToSwap, amountToSwap, optimalAmount0Decimal, optimalAmount1Decimal);
+            return (tokenToSwap, amountToSell, amountToBuy, optimalAmount0Decimal, optimalAmount1Decimal, totalValueInUSD);
         }
 
 
         public static (decimal amountToBuy, string tokenToBuy) DetermineTokenPurchase(
-    decimal requiredAmount0, decimal requiredAmount1,
-    decimal availableAmount0, decimal availableAmount1)
+        decimal requiredAmount0, decimal requiredAmount1,
+        decimal availableAmount0, decimal availableAmount1)
         {
             decimal deficit0 = requiredAmount0 - availableAmount0;
             decimal deficit1 = requiredAmount1 - availableAmount1;

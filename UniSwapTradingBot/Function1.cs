@@ -15,6 +15,9 @@ using System.Collections.Generic;
 using Google.Protobuf.WellKnownTypes;
 using Newtonsoft.Json.Linq;
 using static UniswapV3PositionHelper;
+using Nethereum.Contracts.Standards.ERC20.TokenList;
+using Azure.Core.GeoJson;
+using UniSwapTradingBot.Utilities;
 
 namespace UniSwapTradingBot
 {
@@ -33,7 +36,7 @@ namespace UniSwapTradingBot
         static string WethAddress = string.Empty;
         static string EthNodeUrl = string.Empty;
         static string PrivateKey = string.Empty;
-        static ulong PositionId = 0;
+        static string TheGraphKey = string.Empty;
 
         [FunctionName("TradingBotOrchestration")]
         public static async Task RunOrchestrator(
@@ -50,9 +53,9 @@ namespace UniSwapTradingBot
             Token1ProxyAddress = envVariables["TOKEN1_PROXY_ADDRESS"];
             WethAddress = envVariables["WETH_ADDRESS"];
             UniswapV3RouterAddress = envVariables["UNISWAP_V3_ROUTER_ADDRESS"];
+            TheGraphKey = envVariables["THE_GRAPH_KEY"];
             decimal.TryParse(envVariables["UPPER_TICKER_PERCENT"], out UpperTickerPercent);
             decimal.TryParse(envVariables["LOWER_TICKER_PERCENT"], out LowerTickerPercent);
-            PositionId = ulong.Parse(envVariables["INITIAL_POSITION_ID"]);
 
             // Call the trading bot logic function
             await context.CallActivityAsync("TradingBot_ExecuteTrade", null);
@@ -62,6 +65,15 @@ namespace UniSwapTradingBot
             await context.CreateTimer(nextRun, CancellationToken.None);
         }
 
+        /*
+         * For a given token pair, the trading bot will:
+         * 1. Fetch the current pool price and calculate thresholds
+         * 2. Get a list of all positions for the wallet address that have liquidity and use a given token pair
+         * 3. Any positions that are outside the price thresholds will have their liquidity removed
+         * 4. Using the liquidity in my wallet, calculate a new optimal position range
+         * 5. Calculate the new liquidity amount based on the new tick range. This will be the amount of token 1 and token 2 to buy accounting for what I have in my wallet
+         * 6. Buy the required token amount to create the position, if I have more than a minimum threshold of liquidity in my wallet, and then create a new position
+         */
         [FunctionName("TradingBot_ExecuteTrade")]
         public static async Task ExecuteTrade([ActivityTrigger] object input, ILogger log)
         {
@@ -73,50 +85,58 @@ namespace UniSwapTradingBot
             var minPriceThreshold = currentPrice * (1 - (LowerTickerPercent / 100));
             var maxPriceThreshold = currentPrice * (1 + (UpperTickerPercent / 100));
 
-            // Retrieve position
-            var position = await UniswapV3PositionHelper.GetPosition(web3, PositionId);
+            // 2. Get a list of all positions for the wallet address that have liquidity and use a given token pair
+            var positions = Subgraph.GetPositions(walletAddress: WalletAddress, Token0ProxyAddress, Token1ProxyAddress, TheGraphKey);
 
-            if (position.TickLower <= minPriceThreshold || position.TickUpper >= maxPriceThreshold)
+            // 3. Any positions that are outside the price thresholds will have their liquidity removed
+            foreach (var position in positions.Result)
             {
-                // 2. Remove all liquidity from the position.
-                var liquidityRemover = new LiquidityRemover(web3, log);
-                CancellationTokenSource cts = new CancellationTokenSource();
+                if (position.TickLower <= minPriceThreshold || position.TickUpper >= maxPriceThreshold)
+                {
+                    // Remove all liquidity from the position
+                    var liquidityRemover = new LiquidityRemover(web3, log);
+                    CancellationTokenSource cts = new CancellationTokenSource();
 
+                    try
+                    {
+                        await liquidityRemover.RemoveLiquidityAsync(PrivateKey, account, position.Id, cts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        log.LogWarning("Operation was canceled.");
+                    }
+                    catch (Exception ex)
+                    {
+                        log.LogError($"Failed to remove liquidity: {ex.Message}");
+                        throw;
+                    }
+                }
+            }
+
+            // 4. Using the liquidity in my wallet, calculate a new optimal position range
+            var newTickLower = (int)(currentPrice - (currentPrice * LowerTickerPercent));
+            var newTickUpper = (int)(currentPrice + (currentPrice * UpperTickerPercent));
+
+            // 5. Calculate the new liquidity amount based on the new tick range. This will be the amount of token 1 and token 2 to buy accounting for what I have in my wallet.
+            decimal availableToken0 = await TokenHelper.GetAvailableTokenBalance(web3, Token0Address, Token0ProxyAddress, WalletAddress);
+            decimal availableToken1 = await TokenHelper.GetAvailableTokenBalance(web3, Token1Address, Token1ProxyAddress, WalletAddress);
+
+            var result = await UniswapV3NewPositionValueHelper.CalculateOptimalSwapForNewPosition(web3, currentPrice, newTickLower, newTickUpper, availableToken0, availableToken1);
+
+            // 6. Buy the required token amount to create the position, if I have more than a minimum threshold of liquidity in my wallet, and then create a new position
+            if (result.totalValueInUSD > 1)
+            {
                 try
                 {
-                    await liquidityRemover.RemoveLiquidityAsync(PrivateKey, account, PositionId, cts.Token);
-                }
-                catch (OperationCanceledException)
-                {
-                    log.LogWarning("Operation was canceled.");
-                }
-                catch (Exception ex)
-                {
-                    log.LogError($"Failed to remove liquidity: {ex.Message}");
-                    throw;
-                }
-
-                // 3. Calculate new position range.
-                var newTickLower = (int)(currentPrice - (currentPrice * LowerTickerPercent));
-                var newTickUpper = (int)(currentPrice + (currentPrice * UpperTickerPercent));
-
-                // 4. Calculate the new liquidity amount based on the new tick range. This will be the amount of token 1 and token 2 to buy accounting for what I have in my wallet.
-                decimal availableToken0 = await TokenHelper.GetAvailableTokenBalance(web3, Token0Address, Token0ProxyAddress, WalletAddress );
-                decimal availableToken1 = await TokenHelper.GetAvailableTokenBalance(web3, Token1Address, Token1ProxyAddress, WalletAddress);
-
-                var result = await UniswapV3NewPositionValueHelper.CalculateOptimalSwapForNewPosition(web3, currentPrice, newTickLower, newTickUpper, availableToken0, availableToken1);
-
-                // 5. Buy the required token amount to create the position
-                try
-                {
-                    string tokenToSell = result.tokenToSwap == "Token0" ? Token0Address : Token1Address;
-                    string tokenToBuy = result.tokenToSwap == "Token0" ? Token1Address : Token0Address;
-                    decimal amountToBuy = result.amountToSwap;
-                
-                    await ExecuteBuyTrade(web3, tokenToBuy, amountToBuy, tokenToSell, log);
+                    string tokenToSell = result.tokenToSwap == "Token0" ? Token0ProxyAddress : Token1ProxyAddress;
+                    string tokenToBuy = result.tokenToSwap == "Token0" ? Token1ProxyAddress : Token0ProxyAddress;
+                    decimal amountToBuy = result.amountToBuy;
+                    decimal amountToSell = result.amountToSell;
+                    await ExecuteBuyTrade(web3, tokenToBuy, amountToBuy, tokenToSell, amountToSell, currentPrice, log);
 
                     // 6. Create a new position with the new tick range using the Uniswap V3 pool contract.
-                    await CreateNewPosition(web3, newTickLower, newTickUpper, result.resultingAmount0, result.resultingAmount1, log).ConfigureAwait(false);
+                    ulong PositionId = await CreateNewPosition(web3, newTickLower, newTickUpper, result.resultingAmount0, result.resultingAmount1, log).ConfigureAwait(false);
+                    log.LogInformation($"Created new position with Token ID: {PositionId}");
                 }
                 catch (OperationCanceledException)
                 {
@@ -132,7 +152,7 @@ namespace UniSwapTradingBot
             }
         }
 
-        static async Task ExecuteBuyTrade(Web3 web3, string tokenToBuyAddress, decimal amountToBuy, string tokenToSellAddress, ILogger log)
+        static async Task ExecuteBuyTrade(Web3 web3, string tokenToBuyAddress, decimal amountToBuy, string tokenToSellAddress, decimal amountToSell, decimal currentPrice, ILogger log)
         {
             try
             {
@@ -141,15 +161,26 @@ namespace UniSwapTradingBot
 
                 // Define the swap parameters
                 ulong deadline = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 600; // 10 minutes from now
-                var amountOut = Web3.Convert.ToWei(amountToBuy); // The exact amount of the token to buy
+
+                var tokenInDecimalPlaces = await TokenHelper.GetTokenDecimals(web3, tokenToSellAddress);
+                var tokenOutDecimalPlaces = await TokenHelper.GetTokenDecimals(web3, tokenToBuyAddress);
+
+
+                var amountOut = Web3.Convert.ToWei(amountToBuy, tokenOutDecimalPlaces); // The exact amount of the token to buy
                 var path = new List<string> { tokenToSellAddress, tokenToBuyAddress }; // Path for the swap, direct pair assumed
                 var account = web3.TransactionManager.Account.Address;
 
-                // Get the current price of tokenToSell in terms of tokenToBuy to calculate amountIn
-                var currentPrice = await UniswapV3PriceHelper.GetPriceOfTokenPair(web3, tokenToSellAddress, tokenToBuyAddress);
-                var amountIn = Web3.Convert.ToWei(amountToBuy / currentPrice);
+                /*
+                var amountIn = Web3.Convert.ToWei(amountToSell / currentPrice, tokenInDecimalPlaces);
 
-                log.LogInformation($"Swapping {amountIn} of {tokenToSellAddress} to buy {amountOut} of {tokenToBuyAddress}");
+                var a = amountToSell / currentPrice;
+                var b = Web3.Convert.ToWei(amountToSell / currentPrice, tokenInDecimalPlaces);
+                var c = Web3.Convert.ToWei(amountToSell / currentPrice);
+                var d = Web3.Convert.ToWei(amountToSell / currentPrice, 18);
+                var e = new BigInteger(amountToSell / currentPrice);
+                */
+
+                log.LogInformation($"Swapping {amountToSell} of {tokenToSellAddress} to buy {amountOut} of {tokenToBuyAddress}");
 
                 // Execute the swap
                 var swapTxn = await swapRouterService.ExactInputSingle(new ExactInputSingleParams
@@ -159,12 +190,12 @@ namespace UniSwapTradingBot
                     Fee = 3000, // pool fee
                     Recipient = account,
                     Deadline = deadline,
-                    AmountIn = (decimal)amountIn,
+                    AmountIn = amountToSell,
                     AmountOutMinimum = 1, // Set to 1 for simplicity; should be based on slippage tolerance
                     SqrtPriceLimitX96 = 0 // No price limit
                 });
 
-                log.LogInformation($"Executed swap for {amountToBuy} of {tokenToBuyAddress} using {amountIn} of {tokenToSellAddress}, transaction hash: {swapTxn}");
+                log.LogInformation($"Executed swap for {amountToBuy} of {tokenToBuyAddress} using {amountToSell} of {tokenToSellAddress}, transaction hash: {swapTxn}");
             }
             catch (Exception ex)
             {
@@ -174,13 +205,15 @@ namespace UniSwapTradingBot
         }
 
 
-        private static async Task CreateNewPosition(Web3 web3, int tickLower, int tickUpper, decimal amount0, decimal amount1, ILogger log)
+        private static async Task<ulong> CreateNewPosition(Web3 web3, int tickLower, int tickUpper, decimal amount0, decimal amount1, ILogger log)
         {
+            ulong tokenId = 0;
+
             try
             {
                 var positionManagerService = new NonfungiblePositionManagerService(web3, UniswapV3RouterAddress);
 
-                var tokenId = await positionManagerService.MintPositionAsync(new MintPositionParams
+                tokenId = (ulong)await positionManagerService.MintPositionAsync(new MintPositionParams
                 {
                     Token0 = Token0Address,
                     Token1 = Token1Address,
@@ -202,6 +235,8 @@ namespace UniSwapTradingBot
                 log.LogError($"Failed to create new position: {ex.Message}");
                 throw;
             }
+
+            return tokenId;
         }
 
         [FunctionName("GetEnvironmentVariables")]
@@ -220,7 +255,8 @@ namespace UniSwapTradingBot
                     { "UNISWAP_V3_ROUTER_ADDRESS", Environment.GetEnvironmentVariable("UNISWAP_V3_ROUTER_ADDRESS") },
                     { "UPPER_TICKER_PERCENT", Environment.GetEnvironmentVariable("UPPER_TICKER_PERCENT") },
                     { "LOWER_TICKER_PERCENT", Environment.GetEnvironmentVariable("LOWER_TICKER_PERCENT") },
-                    { "INITIAL_POSITION_ID", Environment.GetEnvironmentVariable("INITIAL_POSITION_ID") }
+                    { "INITIAL_POSITION_ID", Environment.GetEnvironmentVariable("INITIAL_POSITION_ID") },
+                    { "THE_GRAPH_KEY", Environment.GetEnvironmentVariable("THE_GRAPH_KEY") },
                 };
         }
 

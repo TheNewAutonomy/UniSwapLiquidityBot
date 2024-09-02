@@ -51,6 +51,9 @@ public static class UniswapV3PositionHelper
         [Parameter("address", "operator", 2)]
         public string Operator { get; set; }
 
+        [Parameter("uint96", "id", 1)]
+        public ulong Id { get; set; }
+
         [Parameter("address", "token0", 3)]
         public string Token0 { get; set; }
 
