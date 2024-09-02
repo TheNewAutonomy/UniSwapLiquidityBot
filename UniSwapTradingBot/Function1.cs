@@ -170,16 +170,6 @@ namespace UniSwapTradingBot
                 var path = new List<string> { tokenToSellAddress, tokenToBuyAddress }; // Path for the swap, direct pair assumed
                 var account = web3.TransactionManager.Account.Address;
 
-                /*
-                var amountIn = Web3.Convert.ToWei(amountToSell / currentPrice, tokenInDecimalPlaces);
-
-                var a = amountToSell / currentPrice;
-                var b = Web3.Convert.ToWei(amountToSell / currentPrice, tokenInDecimalPlaces);
-                var c = Web3.Convert.ToWei(amountToSell / currentPrice);
-                var d = Web3.Convert.ToWei(amountToSell / currentPrice, 18);
-                var e = new BigInteger(amountToSell / currentPrice);
-                */
-
                 log.LogInformation($"Swapping {amountToSell} of {tokenToSellAddress} to buy {amountOut} of {tokenToBuyAddress}");
 
                 // Execute the swap

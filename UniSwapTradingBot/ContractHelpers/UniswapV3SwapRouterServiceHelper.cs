@@ -48,7 +48,7 @@ namespace UniSwapTradingBot.ContractHelpers
                     Deadline = swapParams.Deadline,
                     AmountIn = (ulong)swapParams.AmountIn,
                     AmountOutMinimum = (ulong)swapParams.AmountOutMinimum,
-                    SqrtPriceLimitX96 = new HexBigInteger(sqrtPriceLimitX96Wei)
+                    SqrtPriceLimitX96 = (ulong)sqrtPriceLimitX96Wei
                 };
 
                 var contract = _web3.Eth.GetContract(Abi, _routerAddress);
@@ -57,18 +57,14 @@ namespace UniSwapTradingBot.ContractHelpers
                 string transactionHash = null;
                 try
                 {
-                    var gas = await exactInputSingleFunction.EstimateGasAsync(function, _web3.TransactionManager.Account.Address, null, null);
-                    var gasPrice = await _web3.Eth.GasPrice.SendRequestAsync();
-
                     var receipt = await exactInputSingleFunction.SendTransactionAndWaitForReceiptAsync(
                         function,
                         new TransactionInput
                         {
                             From = _web3.TransactionManager.Account.Address,
                             To = _routerAddress,
-                            Gas = gas,
-                            GasPrice = gasPrice,
-                            Value = new HexBigInteger(0) // Assuming no ETH is being sent
+                            Gas = new HexBigInteger(2000000),
+                            Value = null
                         }
                     );
 
@@ -231,7 +227,7 @@ namespace UniSwapTradingBot.ContractHelpers
         public ulong AmountOutMinimum { get; set; }
 
         [Parameter("uint160", "sqrtPriceLimitX96", 8)]
-        public HexBigInteger SqrtPriceLimitX96 { get; set; }
+        public ulong SqrtPriceLimitX96 { get; set; }
     }
 
     public class ExactInputSingleParams
