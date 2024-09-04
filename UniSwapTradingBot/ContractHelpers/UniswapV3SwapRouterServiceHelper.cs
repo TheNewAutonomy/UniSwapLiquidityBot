@@ -53,8 +53,8 @@ namespace UniSwapTradingBot.ContractHelpers
 
                 var contract = _web3.Eth.GetContract(Abi, _routerAddress);
                 var exactInputSingleFunction = contract.GetFunction<ExactInputSingleFunction>();
-
                 string transactionHash = null;
+
                 try
                 {
                     var receipt = await exactInputSingleFunction.SendTransactionAndWaitForReceiptAsync(
@@ -69,11 +69,9 @@ namespace UniSwapTradingBot.ContractHelpers
                     );
 
                     transactionHash = receipt.TransactionHash;
-
                 }
                 catch (Exception ex)
                 {
-                    var x = ex.Message;
                     throw;
                 }
                 return transactionHash;
@@ -198,7 +196,6 @@ namespace UniSwapTradingBot.ContractHelpers
                 ""stateMutability"": ""payable"",
                 ""type"": ""function""
             }
-            // Add other functions in the same format here...
         ]";
     }
 

@@ -119,7 +119,6 @@ namespace UniSwapTradingBot.ContractHelpers
             return (tokenToSwap, amountToSell, amountToBuy, optimalAmount0Decimal, optimalAmount1Decimal, totalValueInUSD);
         }
 
-
         public static (decimal amountToBuy, string tokenToBuy) DetermineTokenPurchase(
         decimal requiredAmount0, decimal requiredAmount1,
         decimal availableAmount0, decimal availableAmount1)

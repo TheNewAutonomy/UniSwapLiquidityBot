@@ -194,7 +194,6 @@ namespace UniSwapTradingBot
             }
         }
 
-
         private static async Task<ulong> CreateNewPosition(Web3 web3, int tickLower, int tickUpper, decimal amount0, decimal amount1, ILogger log)
         {
             ulong tokenId = 0;
