@@ -8,6 +8,8 @@ using Nethereum.RPC.Eth.DTOs;
 using System.Threading;
 using System.Numerics;
 using Nethereum.Model;
+using Google.Protobuf.WellKnownTypes;
+using Nethereum.ABI.FunctionEncoding;
 
 namespace UniSwapTradingBot.ContractHelpers
 {
@@ -29,15 +31,20 @@ namespace UniSwapTradingBot.ContractHelpers
                 var tokenInDecimalPlaces = await TokenHelper.GetTokenDecimals(_web3, swapParams.TokenIn);
                 var tokenOutDecimalPlaces = await TokenHelper.GetTokenDecimals(_web3, swapParams.TokenOut);
 
-                // Correct conversion from decimal to Wei using appropriate precision
                 var amountInWei = Web3.Convert.ToWei(swapParams.AmountIn, tokenInDecimalPlaces);
                 var amountOutMinimumWei = Web3.Convert.ToWei(swapParams.AmountOutMinimum, tokenOutDecimalPlaces);
                 var sqrtPriceLimitX96Wei = new BigInteger(swapParams.SqrtPriceLimitX96);
 
-                // Debug information to ensure values are correct
-                Console.WriteLine($"AmountIn (Wei): {amountInWei}");
-                Console.WriteLine($"AmountOutMinimum (Wei): {amountOutMinimumWei}");
-                Console.WriteLine($"SqrtPriceLimitX96 (Wei): {sqrtPriceLimitX96Wei}");
+                var tokenAddressFromProxy = TokenHelper.getTokenFromProxy(swapParams.TokenIn);
+
+                // Check current allowance of the token
+                var allowance = await TokenHelper.GetAllowance(_web3, tokenAddressFromProxy, _web3.TransactionManager.Account.Address, _routerAddress);
+                if (allowance < amountInWei)
+                {
+                    Console.WriteLine("Allowance is insufficient, approving the router...");
+                    // Approve the router to spend the required amount
+                    await TokenHelper.ApproveToken(_web3, tokenAddressFromProxy, _routerAddress, amountInWei);
+                }
 
                 var function = new ExactInputSingleFunction
                 {
@@ -53,35 +60,50 @@ namespace UniSwapTradingBot.ContractHelpers
 
                 var contract = _web3.Eth.GetContract(Abi, _routerAddress);
                 var exactInputSingleFunction = contract.GetFunction<ExactInputSingleFunction>();
-                string transactionHash = null;
 
-                try
-                {
-                    var receipt = await exactInputSingleFunction.SendTransactionAndWaitForReceiptAsync(
-                        function,
-                        new TransactionInput
-                        {
-                            From = _web3.TransactionManager.Account.Address,
-                            To = _routerAddress,
-                            Gas = new HexBigInteger(2000000),
-                            Value = null
-                        }
-                    );
+                // Estimating the gas required for the transaction
+                var gasEstimate = await exactInputSingleFunction.EstimateGasAsync(
+                    function,
+                    new CallInput
+                    {
+                        From = _web3.TransactionManager.Account.Address,
+                        To = _routerAddress,
+                        Value = new HexBigInteger(0),
+                        Data = exactInputSingleFunction.GetData(function)
+                    }
+                );
 
-                    transactionHash = receipt.TransactionHash;
-                }
-                catch (Exception ex)
-                {
-                    throw;
-                }
-                return transactionHash;
+                // Adding a buffer to gas estimate to ensure transaction execution
+                var gasBuffer = new HexBigInteger(gasEstimate.Value * 110 / 100); // 10% buffer
+
+                // Sending the transaction
+                var transactionHash = await exactInputSingleFunction.SendTransactionAndWaitForReceiptAsync(
+                    function,
+                    new TransactionInput
+                    {
+                        From = _web3.TransactionManager.Account.Address,
+                        To = _routerAddress,
+                        Gas = gasBuffer, // Using estimated gas with buffer
+                        Value = null
+                    }
+                );
+
+                return transactionHash.TransactionHash;
+            }
+            catch (SmartContractRevertException revertEx)
+            {
+                // This exception type is specific to reverts and might provide revert reason
+                Console.WriteLine($"Transaction reverted: {revertEx.RevertMessage}");
+                throw;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error executing ExactInputSingle: {ex.Message}");
+                // More details can be logged here if needed
                 throw;
             }
         }
+
 
         // Uniswap V3 Router ABI - Partial ABI containing only the necessary parts for ExactInputSingle
         private const string Abi = @"[
