@@ -1,92 +1,22 @@
-﻿using System;
-using System.Threading.Tasks;
-using Nethereum.Web3;
-using Nethereum.Contracts;
-using Nethereum.ABI.FunctionEncoding.Attributes;
+﻿using Nethereum.Web3;
+using Nethereum.Web3.Accounts;
 using Nethereum.Hex.HexTypes;
 using Nethereum.RPC.Eth.DTOs;
-using System.Threading;
+using System;
 using System.Numerics;
+using System.Threading.Tasks;
+using Nethereum.Util;
 using Nethereum.Model;
-using Google.Protobuf.WellKnownTypes;
-using Nethereum.ABI.FunctionEncoding;
+using UniSwapTradingBot.ContractHelpers;
+using Nethereum.ABI.FunctionEncoding.Attributes;
+using Nethereum.Contracts.Standards.ERC20.TokenList;
 
-namespace UniSwapTradingBot.ContractHelpers
+public class UniSwapV3SwapRouter
 {
-    public class SwapRouterService
-    {
-        private readonly Web3 _web3;
-        private readonly string _routerAddress;
+    private readonly Web3 _web3;
+    private readonly string _routerAddress;
 
-        public SwapRouterService(Web3 web3, string routerAddress)
-        {
-            _web3 = web3;
-            _routerAddress = routerAddress;
-        }
-
-        public async Task<string> ExactInputSingle(ExactInputSingleParams swapParams)
-        {
-            try
-            {
-                // Fetch token decimals
-                var tokenInDecimalPlaces = await TokenHelper.GetTokenDecimals(_web3, swapParams.TokenIn);
-                var tokenOutDecimalPlaces = await TokenHelper.GetTokenDecimals(_web3, swapParams.TokenOut);
-
-                // Convert amounts to wei using BigInteger
-                var amountInWei = Web3.Convert.ToWei(swapParams.AmountIn, tokenInDecimalPlaces);
-                var amountOutMinimumWei = Web3.Convert.ToWei(swapParams.AmountOutMinimum, tokenOutDecimalPlaces);
-
-                // Check and set allowance
-                var allowance = await TokenHelper.GetAllowance(_web3, swapParams.TokenIn, _web3.TransactionManager.Account.Address, _routerAddress);
-                if (allowance < amountInWei)
-                {
-                    await TokenHelper.ApproveToken(_web3, swapParams.TokenIn, _routerAddress, amountInWei);
-                }
-
-                // Prepare function parameters without subtracting the fee
-                var function = new ExactInputSingleFunction
-                {
-                    TokenIn = swapParams.TokenIn,
-                    TokenOut = swapParams.TokenOut,
-                    Fee = swapParams.Fee, // Pool's fee tier
-                    Recipient = swapParams.Recipient,
-                    Deadline = swapParams.Deadline,
-                    AmountIn = amountInWei, // Use the full amount
-                    AmountOutMinimum = amountOutMinimumWei,
-                    SqrtPriceLimitX96 = BigInteger.Zero // If no price limit is needed
-                };
-
-                // Get the contract and function
-                var contract = _web3.Eth.GetContract(Abi, _routerAddress);
-                var exactInputSingleFunction = contract.GetFunction<ExactInputSingleFunction>();
-
-                // Estimate gas
-                var gasEstimate = await exactInputSingleFunction.EstimateGasAsync(function);
-
-                // Send the transaction
-                var transactionReceipt = await exactInputSingleFunction.SendTransactionAndWaitForReceiptAsync(function, new TransactionInput
-                {
-                    From = _web3.TransactionManager.Account.Address,
-                    Gas = gasEstimate
-                });
-
-                return transactionReceipt.TransactionHash;
-            }
-            catch (SmartContractRevertException revertEx)
-            {
-                Console.WriteLine($"Transaction reverted: {revertEx.RevertMessage}");
-                throw;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error executing ExactInputSingle: {ex.Message}");
-                throw;
-            }
-        }
-
-
-        // Uniswap V3 Router ABI - Partial ABI containing only the necessary parts for ExactInputSingle
-        private const string Abi = @"[
+    private const string SwapRouterAbi = @"[
             {
                 ""inputs"": [
                     { ""internalType"": ""address"", ""name"": ""_factory"", ""type"": ""address"" },
@@ -199,45 +129,123 @@ namespace UniSwapTradingBot.ContractHelpers
                 ""type"": ""function""
             }
         ]";
-    }
 
-    [Function("exactInputSingle", "uint256")]
-    public class ExactInputSingleFunction : FunctionMessage
+    public UniSwapV3SwapRouter(Web3 web3, string routerAddress)
     {
-        [Parameter("address", "tokenIn", 1)]
-        public string TokenIn { get; set; }
-
-        [Parameter("address", "tokenOut", 2)]
-        public string TokenOut { get; set; }
-
-        [Parameter("uint24", "fee", 3)]
-        public uint Fee { get; set; }
-
-        [Parameter("address", "recipient", 4)]
-        public string Recipient { get; set; }
-
-        [Parameter("uint256", "deadline", 5)]
-        public ulong Deadline { get; set; }
-
-        [Parameter("uint256", "amountIn", 6)]
-        public BigInteger AmountIn { get; set; }
-
-        [Parameter("uint256", "amountOutMinimum", 7)]
-        public BigInteger AmountOutMinimum { get; set; }
-
-        [Parameter("uint160", "sqrtPriceLimitX96", 8)]
-        public BigInteger SqrtPriceLimitX96 { get; set; }
+        _web3 = web3;
+        _routerAddress = routerAddress;
     }
 
-    public class ExactInputSingleParams
+    public async Task<string> SwapExactInputSingleAsync(
+    string tokenIn, string tokenOut, int fee, BigInteger amountIn, BigInteger amountOutMinimum,
+    string recipient, BigInteger deadline)
     {
-        public string TokenIn { get; set; }
-        public string TokenOut { get; set; }
-        public uint Fee { get; set; }
-        public string Recipient { get; set; }
-        public ulong Deadline { get; set; }
-        public decimal AmountIn { get; set; }
-        public decimal AmountOutMinimum { get; set; }
-        public decimal SqrtPriceLimitX96 { get; set; }
+        string transactionHash = string.Empty;
+
+        try
+        {
+            // Load the contract using ABI and Router Address
+            var contract = _web3.Eth.GetContract(SwapRouterAbi, _routerAddress);
+            var exactInputSingleFunction = contract.GetFunction("exactInputSingle");
+
+            // Create input data for the exactInputSingle function
+            var parameters = new ExactInputSingleParams
+            {
+                TokenIn = tokenIn,
+                TokenOut = tokenOut,
+                Fee = (uint)fee,
+                Recipient = recipient,
+                Deadline = (ulong)deadline,
+                AmountIn = amountIn,
+                AmountOutMinimum = 0,
+                SqrtPriceLimitX96 = BigInteger.Zero  // No price limit
+            };
+
+            // Encode the parameters into transaction input data
+            var transactionInputData = exactInputSingleFunction.GetData(parameters);
+
+            // Get the transaction count (nonce)
+            var nonce = await _web3.Eth.Transactions.GetTransactionCount.SendRequestAsync(
+                _web3.TransactionManager.Account.Address, BlockParameter.CreatePending());
+
+            // Fetch the current gas price dynamically
+            var gasPrice = await _web3.Eth.GasPrice.SendRequestAsync();
+
+            // Try estimating gas for the transaction
+            HexBigInteger gasEstimate;
+            try
+            {
+                // Check current allowance of the token
+                var allowance = await TokenHelper.GetAllowance(_web3, tokenIn, _web3.TransactionManager.Account.Address, _routerAddress);
+                if (allowance < amountIn)
+                {
+                    // Approve the router to spend the required amount
+                    await TokenHelper.ApproveToken(_web3, tokenIn, _routerAddress, amountIn);
+                }
+
+                gasEstimate = await exactInputSingleFunction.EstimateGasAsync(transactionInputData);
+            }
+            catch (Exception ex)
+            {
+                // Fallback to a manual gas estimate if dynamic estimation fails
+                Console.WriteLine($"Gas estimation failed: {ex.Message}. Using fallback gas limit.");
+                gasEstimate = new HexBigInteger(500000);  // Set a fallback gas limit (adjust as needed)
+            }
+
+            // Create a transaction object
+            var transaction = new TransactionInput
+            {
+                From = _web3.TransactionManager.Account.Address,
+                To = _routerAddress,
+                Data = transactionInputData,
+                Gas = gasEstimate,
+                GasPrice = gasPrice,
+                Nonce = new HexBigInteger(nonce),
+                Value = new HexBigInteger(0)  // Adjust if ETH is involved
+            };
+
+            // Sign the transaction
+            var signedTransaction = await _web3.TransactionManager.Account.TransactionManager.SignTransactionAsync(transaction);
+
+            // Send the signed transaction
+            transactionHash = await _web3.Eth.Transactions.SendRawTransaction.SendRequestAsync(signedTransaction);
+
+            Console.WriteLine($"Transaction sent successfully. Hash: {transactionHash}");
+        }
+        catch (Exception ex)
+        {
+            // Improved error logging
+            Console.WriteLine($"Error during SwapExactInputSingleAsync: {ex.Message}");
+        }
+
+        return transactionHash;
     }
+
+}
+
+public class ExactInputSingleParams
+{
+    [Parameter("address", "tokenIn", 1)]
+    public string TokenIn { get; set; }
+
+    [Parameter("address", "tokenOut", 2)]
+    public string TokenOut { get; set; }
+
+    [Parameter("uint24", "fee", 3)]
+    public uint Fee { get; set; }
+
+    [Parameter("address", "recipient", 4)]
+    public string Recipient { get; set; }
+
+    [Parameter("uint256", "deadline", 5)]
+    public BigInteger Deadline { get; set; }
+
+    [Parameter("uint256", "amountIn", 6)]
+    public BigInteger AmountIn { get; set; }
+
+    [Parameter("uint256", "amountOutMinimum", 7)]
+    public BigInteger AmountOutMinimum { get; set; }
+
+    [Parameter("uint160", "sqrtPriceLimitX96", 8)]
+    public BigInteger SqrtPriceLimitX96 { get; set; }
 }

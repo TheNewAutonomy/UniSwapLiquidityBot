@@ -1318,7 +1318,7 @@ public class LiquidityRemover
         multicallData.Add(await PrepareDecreaseLiquidityCall(positionId, position));
 
         // 2. Collect all tokens
-        multicallData.Add(await PrepareCollectTokensCall(positionId, account.Address));
+        multicallData.Add(PrepareCollectTokensCall(positionId, account.Address));
 
         // 3. Burn the NFT position
         multicallData.Add(await PrepareBurnPositionCall(positionId));
@@ -1367,7 +1367,7 @@ public class LiquidityRemover
         return encodedFunctionCall.HexToByteArray();
     }
 
-    private async Task<byte[]> PrepareCollectTokensCall(ulong positionId, string recipient)
+    private byte[] PrepareCollectTokensCall(ulong positionId, string recipient)
     {
         var functionCallEncoder = new FunctionCallEncoder();
         var sha3Keccack = new Sha3Keccack();
@@ -1403,7 +1403,7 @@ public class LiquidityRemover
     }
 
 
-    private async Task<byte[]> PrepareBurnPositionCall(ulong positionId)
+    private Task<byte[]> PrepareBurnPositionCall(ulong positionId)
     {
         var functionCallEncoder = new FunctionCallEncoder();
         var sha3Keccack = new Sha3Keccack();
@@ -1429,7 +1429,7 @@ public class LiquidityRemover
 
         // Combine the function selector and encoded parameters
         var encodedFunctionCall = "0x" + functionSelector + encodedParameters.ToHex();
-        return encodedFunctionCall.HexToByteArray();
+        return Task.FromResult(encodedFunctionCall.HexToByteArray());
     }
 
     private async Task ExecuteMulticallAsync(Account account, List<byte[]> callsData)

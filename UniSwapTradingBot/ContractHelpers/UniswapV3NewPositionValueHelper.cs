@@ -49,75 +49,97 @@ namespace UniSwapTradingBot.ContractHelpers
             return integral + fractionalBigInt;
         }
 
-        public static async Task<(string tokenToSwap, decimal amountToSell, decimal amountToBuy, decimal resultingAmount0, decimal resultingAmount1, decimal totalValueInUSD)> CalculateOptimalSwapForNewPosition(
-        Web3 web3,
-        decimal currentPrice,
-        int newTickLower,
-        int newTickUpper,
-        decimal availableToken0,
-        decimal availableToken1)
+        public static Task<(string tokenToSell, string tokenToBuy, BigInteger amountToSell, BigInteger amountToBuy, BigInteger resultingAmount0, BigInteger resultingAmount1, BigInteger totalValueInUSD)> CalculateOptimalSwapForNewPosition(
+    Web3 web3,
+    decimal currentPrice,
+    int newTickLower,
+    int newTickUpper,
+    decimal availableToken0,
+    decimal availableToken1,
+    int token0Decimals, // Decimals for Token0 (e.g., BTC)
+    int token1Decimals, // Decimals for Token1 (e.g., USDC)
+    string token0Address,
+    string token1Address
+)
         {
             // Step 1: Calculate the dollar value of each token amount
-            decimal valueToken0InUSD = availableToken0 * currentPrice; // Value of Bitcoin in USD
-            decimal valueToken1InUSD = availableToken1; // Value of USDC in USD (1:1)
+            decimal valueToken0InUSD = availableToken0 * currentPrice; // Value of Token0 (e.g., Bitcoin) in USD
+            decimal valueToken1InUSD = availableToken1; // Value of Token1 (USDC) in USD (1:1)
 
             // Step 2: Calculate total value and target value for each token to achieve 50/50 balance
             decimal totalValueInUSD = valueToken0InUSD + valueToken1InUSD;
             decimal targetValuePerTokenInUSD = totalValueInUSD / 2;
 
-            string tokenToSwap = string.Empty;
-            decimal amountToSell = 0m;
-            decimal amountToBuy = 0m;
-            decimal optimalAmount0Decimal = availableToken0;
-            decimal optimalAmount1Decimal = availableToken1;
+            string tokenToSell = string.Empty;
+            string tokenToBuy = string.Empty;
+            BigInteger amountToSell = 0;
+            BigInteger amountToBuy = 0;
+            BigInteger optimalAmount0 = ConvertToBigInteger(availableToken0, token0Decimals);
+            BigInteger optimalAmount1 = ConvertToBigInteger(availableToken1, token1Decimals);
 
             // Step 3: Determine which token needs to be swapped and by how much to achieve the target balance
             if (valueToken0InUSD > targetValuePerTokenInUSD)
             {
                 // We have more value in Token0 (Bitcoin) than desired, so we need to sell some of it
-                tokenToSwap = "Token0";
+                tokenToSell = token0Address;
+                tokenToBuy = token1Address;
 
                 // Calculate how much Token0 (Bitcoin) to sell to reach target value
                 decimal excessValueInUSD = valueToken0InUSD - targetValuePerTokenInUSD;
-                amountToSell = excessValueInUSD / currentPrice; // Amount of Token0 (Bitcoin) to sell
+                decimal amountToSellDecimal = excessValueInUSD / currentPrice; // Amount of Token0 to sell
+
+                // Convert the amount to sell into the smallest units (BigInteger)
+                amountToSell = ConvertToBigInteger(amountToSellDecimal, token0Decimals);
 
                 // Recalculate the resulting amounts after the swap
-                optimalAmount0Decimal = availableToken0 - amountToSell;
-                optimalAmount1Decimal = availableToken1 + excessValueInUSD; // Receiving this amount in USD worth of Token1 (USDC)
-                                                                            // Ensure non-negative amounts
-                optimalAmount0Decimal = Math.Max(optimalAmount0Decimal, 0);
-                optimalAmount1Decimal = Math.Max(optimalAmount1Decimal, 0);
+                optimalAmount0 = ConvertToBigInteger(availableToken0 - amountToSellDecimal, token0Decimals);
+                optimalAmount1 = ConvertToBigInteger(availableToken1 + excessValueInUSD, token1Decimals); // Receiving this amount in USDC
 
-                amountToBuy = optimalAmount1Decimal - availableToken1;
+                // Ensure non-negative amounts
+                optimalAmount0 = BigInteger.Max(optimalAmount0, 0);
+                optimalAmount1 = BigInteger.Max(optimalAmount1, 0);
+
+                // Calculate amount to buy
+                amountToBuy = optimalAmount1 - ConvertToBigInteger(availableToken1, token1Decimals);
             }
             else if (valueToken1InUSD > targetValuePerTokenInUSD)
             {
                 // We have more value in Token1 (USDC) than desired, so we need to sell some of it
-                tokenToSwap = "Token1";
+                tokenToSell = token1Address;
+                tokenToBuy = token0Address;
 
                 // Calculate how much Token1 (USDC) to sell to reach target value
                 decimal excessValueInUSD = valueToken1InUSD - targetValuePerTokenInUSD;
-                amountToSell = excessValueInUSD; // Amount of Token1 (USDC) to sell (1:1 value)
+                amountToSell = ConvertToBigInteger(excessValueInUSD, token1Decimals); // Amount of Token1 to sell (1:1 value)
 
                 // Recalculate the resulting amounts after the swap
-                optimalAmount0Decimal = availableToken0 + (excessValueInUSD / currentPrice); // Receiving this amount in Token0 (Bitcoin)
-                optimalAmount1Decimal = availableToken1 - amountToSell;
+                optimalAmount0 = ConvertToBigInteger(availableToken0 + (excessValueInUSD / currentPrice), token0Decimals); // Receiving this amount in Token0
+                optimalAmount1 = ConvertToBigInteger(availableToken1 - excessValueInUSD, token1Decimals);
 
                 // Ensure non-negative amounts
-                optimalAmount0Decimal = Math.Max(optimalAmount0Decimal, 0);
-                optimalAmount1Decimal = Math.Max(optimalAmount1Decimal, 0);
+                optimalAmount0 = BigInteger.Max(optimalAmount0, 0);
+                optimalAmount1 = BigInteger.Max(optimalAmount1, 0);
 
-                amountToBuy = optimalAmount0Decimal - availableToken0;
+                // Calculate amount to buy
+                amountToBuy = optimalAmount0 - ConvertToBigInteger(availableToken0, token0Decimals);
             }
             else
             {
                 // Already balanced, no swap needed
-                tokenToSwap = "None";
-                amountToSell = 0m;
+                tokenToSell = "0x0000000000000000000000000000000000000000\r\n";
+                amountToSell = 0;
             }
 
-            return (tokenToSwap, amountToSell, amountToBuy, optimalAmount0Decimal, optimalAmount1Decimal, totalValueInUSD);
+            return Task.FromResult<(string tokenToSell, string tokenToBuy, BigInteger amountToSell, BigInteger amountToBuy, BigInteger resultingAmount0, BigInteger resultingAmount1, BigInteger totalValueInUSD)>((tokenToSell, tokenToBuy, amountToSell, amountToBuy, optimalAmount0, optimalAmount1, ConvertToBigInteger(totalValueInUSD, 2))); // Assuming 2 decimals for total USD value
         }
+
+        // Helper method to convert decimal to BigInteger based on token decimals
+        private static BigInteger ConvertToBigInteger(decimal value, int decimals)
+        {
+            decimal scaleFactor = (decimal)Math.Pow(10, decimals);
+            return new BigInteger(value * scaleFactor);
+        }
+
 
         public static (decimal amountToBuy, string tokenToBuy) DetermineTokenPurchase(
         decimal requiredAmount0, decimal requiredAmount1,

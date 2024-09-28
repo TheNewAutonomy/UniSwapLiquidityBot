@@ -18,6 +18,7 @@ using static UniswapV3PositionHelper;
 using Nethereum.Contracts.Standards.ERC20.TokenList;
 using Azure.Core.GeoJson;
 using UniSwapTradingBot.Utilities;
+using Nethereum.Util;
 
 namespace UniSwapTradingBot
 {
@@ -26,9 +27,7 @@ namespace UniSwapTradingBot
         static decimal UpperTickerPercent = 10;
         static decimal LowerTickerPercent = 10;
         static string WalletAddress = string.Empty;
-        static string Token0Address = string.Empty;
         static string Token0ProxyAddress = string.Empty;
-        static string Token1Address = string.Empty;
         static string Token1ProxyAddress = string.Empty;
         static string UniswapV3RouterAddress = string.Empty;
         static string UniswapV3PositionManagerAddress = string.Empty;
@@ -47,9 +46,7 @@ namespace UniSwapTradingBot
             EthNodeUrl = envVariables["ETH_NODE_URL"];
             PrivateKey = envVariables["ETH_PRIVATE_KEY"];
             WalletAddress = envVariables["WALLET_ADDRESS"];
-            Token0Address = envVariables["TOKEN0_ADDRESS"];
             Token0ProxyAddress = envVariables["TOKEN0_PROXY_ADDRESS"];
-            Token1Address = envVariables["TOKEN1_ADDRESS"];
             Token1ProxyAddress = envVariables["TOKEN1_PROXY_ADDRESS"];
             WethAddress = envVariables["WETH_ADDRESS"];
             UniswapV3RouterAddress = envVariables["UNISWAP_V3_ROUTER_ADDRESS"];
@@ -118,25 +115,24 @@ namespace UniSwapTradingBot
             var newTickUpper = (int)(currentPrice + (currentPrice * UpperTickerPercent));
 
             // 5. Calculate the new liquidity amount based on the new tick range. This will be the amount of token 1 and token 2 to buy accounting for what I have in my wallet.
-            decimal availableToken0 = await TokenHelper.GetAvailableTokenBalance(web3, Token0Address, Token0ProxyAddress, WalletAddress);
-            decimal availableToken1 = await TokenHelper.GetAvailableTokenBalance(web3, Token1Address, Token1ProxyAddress, WalletAddress);
+            decimal availableToken0 = await TokenHelper.GetAvailableTokenBalance(web3, Token0ProxyAddress, Token0ProxyAddress, WalletAddress);
+            decimal availableToken1 = await TokenHelper.GetAvailableTokenBalance(web3, Token1ProxyAddress, Token1ProxyAddress, WalletAddress);
 
-            var result = await UniswapV3NewPositionValueHelper.CalculateOptimalSwapForNewPosition(web3, currentPrice, newTickLower, newTickUpper, availableToken0, availableToken1);
+            var token0Decimals = await TokenHelper.GetTokenDecimals(web3, Token0ProxyAddress);
+            var token1Decimals = await TokenHelper.GetTokenDecimals(web3, Token1ProxyAddress);
+
+            var result = await UniswapV3NewPositionValueHelper.CalculateOptimalSwapForNewPosition(web3, currentPrice, newTickLower, newTickUpper, availableToken0, availableToken1, token0Decimals, token1Decimals, Token0ProxyAddress, Token1ProxyAddress);
 
             // 6. Buy the required token amount to create the position, if I have more than a minimum threshold of liquidity in my wallet, and then create a new position
             if (result.totalValueInUSD > 1)
             {
                 try
                 {
-                    string tokenToSell = result.tokenToSwap == "Token0" ? Token0ProxyAddress : Token1ProxyAddress;
-                    string tokenToBuy = result.tokenToSwap == "Token0" ? Token1ProxyAddress : Token0ProxyAddress;
-                    decimal amountToBuy = result.amountToBuy;
-                    decimal amountToSell = result.amountToSell;
-                    await ExecuteBuyTrade(web3, tokenToBuy, amountToBuy, tokenToSell, amountToSell, currentPrice, log);
+                    await ExecuteBuyTrade(web3, result.tokenToBuy, result.amountToBuy, result.tokenToSell, result.amountToSell, currentPrice, log);
 
                     // 6. Create a new position with the new tick range using the Uniswap V3 pool contract.
-                    ulong PositionId = await CreateNewPosition(web3, newTickLower, newTickUpper, result.resultingAmount0, result.resultingAmount1, log).ConfigureAwait(false);
-                    log.LogInformation($"Created new position with Token ID: {PositionId}");
+                    string tokenHash = await CreateNewPosition(web3, newTickLower, newTickUpper, result.resultingAmount0, result.resultingAmount1, log).ConfigureAwait(false);
+                    log.LogInformation($"Created new position with Hash: {tokenHash}");
                 }
                 catch (OperationCanceledException)
                 {
@@ -152,7 +148,7 @@ namespace UniSwapTradingBot
             }
         }
 
-        static async Task ExecuteBuyTrade(Web3 web3, string tokenToBuyAddress, decimal amountToBuy, string tokenToSellAddress, decimal amountToSell, decimal currentPrice, ILogger log)
+        static async Task ExecuteBuyTrade(Web3 web3, string tokenToBuyAddress, BigInteger amountToBuy, string tokenToSellAddress, BigInteger amountToSell, decimal currentPrice, ILogger log)
         {
             try
             {
@@ -162,30 +158,23 @@ namespace UniSwapTradingBot
                 // Define the swap parameters
                 ulong deadline = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 600; // 10 minutes from now
 
-                var tokenInDecimalPlaces = await TokenHelper.GetTokenDecimals(web3, tokenToSellAddress);
-                var tokenOutDecimalPlaces = await TokenHelper.GetTokenDecimals(web3, tokenToBuyAddress);
-
-
-                var amountOut = Web3.Convert.ToWei(amountToBuy, tokenOutDecimalPlaces); // The exact amount of the token to buy
-                var path = new List<string> { tokenToSellAddress, tokenToBuyAddress }; // Path for the swap, direct pair assumed
-                var account = web3.TransactionManager.Account.Address;
-
-                log.LogInformation($"Swapping {amountToSell} of {tokenToSellAddress} to buy {amountOut} of {tokenToBuyAddress}");
-
                 // Execute the swap
-                var swapTxn = await swapRouterService.ExactInputSingle(new ExactInputSingleParams
-                {
-                    TokenIn = tokenToSellAddress,
-                    TokenOut = tokenToBuyAddress,
-                    Fee = 3000, // pool fee
-                    Recipient = account,
-                    Deadline = deadline,
-                    AmountIn = amountToSell,
-                    AmountOutMinimum = 1, // Set to 1 for simplicity; should be based on slippage tolerance
-                    SqrtPriceLimitX96 = 0 // No price limit
-                });
+                var swapRouter = new UniSwapV3SwapRouter(
+                   web3: web3,
+                   routerAddress: routerAddress
+               );
 
-                log.LogInformation($"Executed swap for {amountToBuy} of {tokenToBuyAddress} using {amountToSell} of {tokenToSellAddress}, transaction hash: {swapTxn}");
+                var txHash = await swapRouter.SwapExactInputSingleAsync(
+                    tokenIn: tokenToSellAddress,
+                    tokenOut: tokenToBuyAddress,
+                    fee: 500, // Example fee tier
+                    amountIn: amountToSell,
+                    amountOutMinimum: amountToBuy,
+                    recipient: web3.TransactionManager.Account.Address,
+                    deadline: deadline // new BigInteger(DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 600)  // Deadline 10 minutes from now
+                );
+
+                Console.WriteLine("Transaction Hash: " + txHash);
             }
             catch (Exception ex)
             {
@@ -194,18 +183,18 @@ namespace UniSwapTradingBot
             }
         }
 
-        private static async Task<ulong> CreateNewPosition(Web3 web3, int tickLower, int tickUpper, decimal amount0, decimal amount1, ILogger log)
+        private static async Task<string> CreateNewPosition(Web3 web3, int tickLower, int tickUpper, BigInteger amount0, BigInteger amount1, ILogger log)
         {
-            ulong tokenId = 0;
+            string tokenHash = string.Empty;
 
             try
             {
                 var positionManagerService = new NonfungiblePositionManagerService(web3, UniswapV3RouterAddress);
 
-                tokenId = (ulong)await positionManagerService.MintPositionAsync(new MintPositionParams
+                tokenHash = await positionManagerService.MintPositionAsync(new MintPositionParams
                 {
-                    Token0 = Token0Address,
-                    Token1 = Token1Address,
+                    Token0 = Token0ProxyAddress,
+                    Token1 = Token1ProxyAddress,
                     Fee = 3000, // pool fee
                     TickLower = tickLower,
                     TickUpper = tickUpper,
@@ -217,7 +206,7 @@ namespace UniSwapTradingBot
                     Deadline = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 600 // 10 minutes from now
                 }).ConfigureAwait(false);
 
-                log.LogInformation($"Created new position with Token ID: {tokenId}");
+                log.LogInformation($"Created new position with Token ID: {tokenHash}");
             }
             catch (Exception ex)
             {
@@ -225,7 +214,7 @@ namespace UniSwapTradingBot
                 throw;
             }
 
-            return tokenId;
+            return tokenHash;
         }
 
         [FunctionName("GetEnvironmentVariables")]
@@ -236,9 +225,7 @@ namespace UniSwapTradingBot
                     { "ETH_NODE_URL", Environment.GetEnvironmentVariable("ETH_NODE_URL") },
                     { "ETH_PRIVATE_KEY", Environment.GetEnvironmentVariable("ETH_PRIVATE_KEY") },
                     { "WALLET_ADDRESS", Environment.GetEnvironmentVariable("WALLET_ADDRESS") },
-                    { "TOKEN0_ADDRESS", Environment.GetEnvironmentVariable("TOKEN0_ADDRESS") },
                     { "TOKEN0_PROXY_ADDRESS", Environment.GetEnvironmentVariable("TOKEN0_PROXY_ADDRESS") },
-                    { "TOKEN1_ADDRESS", Environment.GetEnvironmentVariable("TOKEN1_ADDRESS") },
                     { "TOKEN1_PROXY_ADDRESS", Environment.GetEnvironmentVariable("TOKEN1_PROXY_ADDRESS") },
                     { "WETH_ADDRESS", Environment.GetEnvironmentVariable("WETH_ADDRESS") },
                     { "UNISWAP_V3_ROUTER_ADDRESS", Environment.GetEnvironmentVariable("UNISWAP_V3_ROUTER_ADDRESS") },

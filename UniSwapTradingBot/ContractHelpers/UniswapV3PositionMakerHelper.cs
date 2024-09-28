@@ -6,6 +6,11 @@ using System.Threading.Tasks;
 using System.Collections.Generic;
 using Nethereum.ABI.FunctionEncoding.Attributes;
 using System;
+using NBitcoin.Secp256k1;
+using Nethereum.Contracts.Standards.ERC20.TokenList;
+using Nethereum.Hex.HexTypes;
+using Nethereum.RPC.Eth.DTOs;
+using Org.BouncyCastle.Cms;
 
 namespace UniSwapTradingBot.ContractHelpers
 {
@@ -27,12 +32,12 @@ namespace UniSwapTradingBot.ContractHelpers
     public class NonfungiblePositionManagerService
     {
         private readonly Web3 _web3;
-        private readonly Contract _contract;
+        private readonly string _routerAddress;
 
         public NonfungiblePositionManagerService(Web3 web3, string contractAddress)
         {
             _web3 = web3;
-            _contract = _web3.Eth.GetContract(abi, "0xC36442b4a4522E871399CD717aBDD847Ab11FE88");
+            _routerAddress = contractAddress;
         }
 
         private static readonly string abi = @"[
@@ -1257,48 +1262,82 @@ namespace UniSwapTradingBot.ContractHelpers
           }
         ]";
 
-        public async Task<BigInteger> MintPositionAsync(MintPositionParams mintParams)
+        public async Task<string> MintPositionAsync(MintPositionParams mintParams)
         {
+            string transactionHash = string.Empty;
+
             try
             {
-                var mintFunction = _contract.GetFunction("mint");
-                var mintParamsStruct = new
+                // Load the contract using ABI and Router Address
+                var contract = _web3.Eth.GetContract(abi, _routerAddress);
+                var mintFunction = contract.GetFunction("mint");
+
+                // Create input data for the exactInputSingle function
+                var parameters = new MintPositionParams
                 {
-                    token0 = mintParams.Token0,
-                    token1 = mintParams.Token1,
-                    fee = mintParams.Fee,
-                    tickLower = mintParams.TickLower,
-                    tickUpper = mintParams.TickUpper,
-                    amount0Desired = mintParams.Amount0Desired,
-                    amount1Desired = mintParams.Amount1Desired,
-                    amount0Min = mintParams.Amount0Min,
-                    amount1Min = mintParams.Amount1Min,
-                    recipient = mintParams.Recipient,
-                    deadline = mintParams.Deadline
+                    Token0 = mintParams.Token0,
+                    Token1 = mintParams.Token1,
+                    Fee = mintParams.Fee,
+                    TickLower = mintParams.TickLower,
+                    TickUpper = mintParams.TickUpper,
+                    Amount0Desired = mintParams.Amount0Desired,
+                    Amount1Desired = mintParams.Amount1Desired,
+                    Amount0Min = mintParams.Amount0Min,
+                    Amount1Min = mintParams.Amount1Min,
+                    Recipient = mintParams.Recipient,
+                    Deadline = mintParams.Deadline
                 };
 
-                var transactionReceipt = await mintFunction.SendTransactionAndWaitForReceiptAsync(
-                    _web3.TransactionManager.Account.Address,
-                    new Nethereum.Hex.HexTypes.HexBigInteger(2000000), // gas amount
-                    value: null, // value in Wei to send
-                    functionInput: mintParamsStruct
-                );
+                // Encode the parameters into transaction input data
+                var transactionInputData = mintFunction.GetData(parameters);
 
-                var logs = transactionReceipt.DecodeAllEvents<PositionMintedEventDTO>();
-                if (logs.Count > 0)
+                // Get the transaction count (nonce)
+                var nonce = await _web3.Eth.Transactions.GetTransactionCount.SendRequestAsync(
+                    _web3.TransactionManager.Account.Address, BlockParameter.CreatePending());
+
+                // Fetch the current gas price dynamically
+                var gasPrice = await _web3.Eth.GasPrice.SendRequestAsync();
+
+                // Try estimating gas for the transaction
+                HexBigInteger gasEstimate;
+                try
                 {
-                    return logs[0].Event.TokenId;
+                    gasEstimate = await mintFunction.EstimateGasAsync(transactionInputData);
                 }
-                else
+                catch (Exception ex)
                 {
-                    throw new Exception("Minting position failed.");
+                    // Fallback to a manual gas estimate if dynamic estimation fails
+                    Console.WriteLine($"Gas estimation failed: {ex.Message}. Using fallback gas limit.");
+                    gasEstimate = new HexBigInteger(500000);  // Set a fallback gas limit (adjust as needed)
                 }
+
+                // Create a transaction object
+                var transaction = new TransactionInput
+                {
+                    From = _web3.TransactionManager.Account.Address,
+                    To = _routerAddress,
+                    Data = transactionInputData,
+                    Gas = gasEstimate,
+                    GasPrice = gasPrice,
+                    Nonce = new HexBigInteger(nonce),
+                    Value = new HexBigInteger(0)  // Adjust if ETH is involved
+                };
+
+                // Sign the transaction
+                var signedTransaction = await _web3.TransactionManager.Account.TransactionManager.SignTransactionAsync(transaction);
+
+                // Send the signed transaction
+                transactionHash = await _web3.Eth.Transactions.SendRawTransaction.SendRequestAsync(signedTransaction);
+
+                Console.WriteLine($"Transaction sent successfully. Hash: {transactionHash}");
             }
-            catch (Exception e)
+            catch (Exception ex)
             {
-                var x = e.Message;
-                throw;
+                // Improved error logging
+                Console.WriteLine($"Error during SwapExactInputSingleAsync: {ex.Message}");
             }
+
+            return transactionHash;
         }
 
         public class PositionMintedEventDTO : IEventDTO
