@@ -164,25 +164,22 @@ public class UniSwapV3SwapRouter
             // Encode the parameters into transaction input data
             var transactionInputData = exactInputSingleFunction.GetData(parameters);
 
-            // Get the transaction count (nonce)
-            var nonce = await _web3.Eth.Transactions.GetTransactionCount.SendRequestAsync(
-                _web3.TransactionManager.Account.Address, BlockParameter.CreatePending());
-
             // Fetch the current gas price dynamically
             var gasPrice = await _web3.Eth.GasPrice.SendRequestAsync();
+
+
+            // Check current allowance of the token
+            var allowance = await TokenHelper.GetAllowance(_web3, tokenIn, _web3.TransactionManager.Account.Address, _routerAddress);
+            if (allowance < amountIn)
+            {
+                // Approve the router to spend the required amount
+                await TokenHelper.ApproveToken(_web3, tokenIn, _routerAddress, amountIn);
+            }
 
             // Try estimating gas for the transaction
             HexBigInteger gasEstimate;
             try
             {
-                // Check current allowance of the token
-                var allowance = await TokenHelper.GetAllowance(_web3, tokenIn, _web3.TransactionManager.Account.Address, _routerAddress);
-                if (allowance < amountIn)
-                {
-                    // Approve the router to spend the required amount
-                    await TokenHelper.ApproveToken(_web3, tokenIn, _routerAddress, amountIn);
-                }
-
                 gasEstimate = await exactInputSingleFunction.EstimateGasAsync(transactionInputData);
             }
             catch (Exception ex)
@@ -191,6 +188,10 @@ public class UniSwapV3SwapRouter
                 Console.WriteLine($"Gas estimation failed: {ex.Message}. Using fallback gas limit.");
                 gasEstimate = new HexBigInteger(500000);  // Set a fallback gas limit (adjust as needed)
             }
+
+            // Get the transaction count (nonce)
+            var nonce = await _web3.Eth.Transactions.GetTransactionCount.SendRequestAsync(
+                _web3.TransactionManager.Account.Address, BlockParameter.CreatePending());
 
             // Create a transaction object
             var transaction = new TransactionInput

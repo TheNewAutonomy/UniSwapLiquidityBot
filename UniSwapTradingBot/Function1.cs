@@ -77,10 +77,8 @@ namespace UniSwapTradingBot
             var account = new Account(PrivateKey);
             var web3 = new Web3(account, EthNodeUrl);
 
-            // 1. Fetch current pool price and calculate thresholds
+            // 1. Fetch current pool price
             var currentPrice = await UniswapV3PriceHelper.GetCurrentPoolPrice(web3);
-            var minPriceThreshold = currentPrice * (1 - (LowerTickerPercent / 100));
-            var maxPriceThreshold = currentPrice * (1 + (UpperTickerPercent / 100));
 
             // 2. Get a list of all positions for the wallet address that have liquidity and use a given token pair
             var positions = Subgraph.GetPositions(walletAddress: WalletAddress, Token0ProxyAddress, Token1ProxyAddress, TheGraphKey);
@@ -88,7 +86,12 @@ namespace UniSwapTradingBot
             // 3. Any positions that are outside the price thresholds will have their liquidity removed
             foreach (var position in positions.Result)
             {
-                if (position.TickLower <= minPriceThreshold || position.TickUpper >= maxPriceThreshold)
+                decimal lowerPrice = currentPrice * (1 - LowerTickerPercent / 100);
+                decimal upperPrice = currentPrice * (1 + UpperTickerPercent / 100);
+
+                var newTickRange = CalculateTicks(currentPrice, LowerTickerPercent, UpperTickerPercent);
+
+                if (position.TickLower <= newTickRange.newTickLower || position.TickUpper >= newTickRange.newTickUpper)
                 {
                     // Remove all liquidity from the position
                     var liquidityRemover = new LiquidityRemover(web3, log);
@@ -110,28 +113,39 @@ namespace UniSwapTradingBot
                 }
             }
 
-            // 4. Using the liquidity in my wallet, calculate a new optimal position range
-            var newTickLower = (int)(currentPrice - (currentPrice * LowerTickerPercent));
-            var newTickUpper = (int)(currentPrice + (currentPrice * UpperTickerPercent));
+            // 4. Calculate newTicks based on the current pool price and percentage range, get the amount of tokens in my wallet and their decimal places
+            var newTicks = CalculateTicks(currentPrice, LowerTickerPercent, UpperTickerPercent);
 
-            // 5. Calculate the new liquidity amount based on the new tick range. This will be the amount of token 1 and token 2 to buy accounting for what I have in my wallet.
             decimal availableToken0 = await TokenHelper.GetAvailableTokenBalance(web3, Token0ProxyAddress, Token0ProxyAddress, WalletAddress);
             decimal availableToken1 = await TokenHelper.GetAvailableTokenBalance(web3, Token1ProxyAddress, Token1ProxyAddress, WalletAddress);
 
             var token0Decimals = await TokenHelper.GetTokenDecimals(web3, Token0ProxyAddress);
             var token1Decimals = await TokenHelper.GetTokenDecimals(web3, Token1ProxyAddress);
 
-            var result = await UniswapV3NewPositionValueHelper.CalculateOptimalSwapForNewPosition(web3, currentPrice, newTickLower, newTickUpper, availableToken0, availableToken1, token0Decimals, token1Decimals, Token0ProxyAddress, Token1ProxyAddress);
+            // 5. Calculate an optimal position and from that, how many tokens to swap to reach that position
+            var result = await UniswapV3NewPositionValueHelper.CalculateOptimalSwapForNewPosition(web3, currentPrice, newTicks.newTickLower, newTicks.newTickUpper, availableToken0, availableToken1, token0Decimals, token1Decimals, Token0ProxyAddress, Token1ProxyAddress);
 
-            // 6. Buy the required token amount to create the position, if I have more than a minimum threshold of liquidity in my wallet, and then create a new position
-            if (result.totalValueInUSD > 1)
+            if (result.amountToSell > 0)
             {
                 try
                 {
+                    // 6. Buy the required token amount to create the position.
                     await ExecuteBuyTrade(web3, result.tokenToBuy, result.amountToBuy, result.tokenToSell, result.amountToSell, currentPrice, log);
 
-                    // 6. Create a new position with the new tick range using the Uniswap V3 pool contract.
-                    string tokenHash = await CreateNewPosition(web3, newTickLower, newTickUpper, result.resultingAmount0, result.resultingAmount1, log).ConfigureAwait(false);
+                    // 7. Recalculate newTocks and ranges based on what's in my wallet since the trade may have introduced some small rounding errors.
+                    availableToken0 = await TokenHelper.GetAvailableTokenBalance(web3, Token0ProxyAddress, Token0ProxyAddress, WalletAddress);
+                    availableToken1 = await TokenHelper.GetAvailableTokenBalance(web3, Token1ProxyAddress, Token1ProxyAddress, WalletAddress);
+                    currentPrice = await UniswapV3PriceHelper.GetCurrentPoolPrice(web3);
+                    newTicks = CalculateTicks(currentPrice, LowerTickerPercent, UpperTickerPercent);
+
+                    decimal token0ScaleFactor = (decimal)Math.Pow(10, token0Decimals);
+                    var token0BigInteger = new BigInteger(availableToken0 * token0ScaleFactor);
+
+                    decimal token1ScaleFactor = (decimal)Math.Pow(10, token1Decimals);
+                    var token1BigInteger = new BigInteger(availableToken1 * token1ScaleFactor);
+
+                    // 8. Create a new position
+                    string tokenHash = await CreateNewPosition(web3, newTicks.newTickLower, newTicks.newTickUpper, token0BigInteger, token1BigInteger, log).ConfigureAwait(false);
                     log.LogInformation($"Created new position with Hash: {tokenHash}");
                 }
                 catch (OperationCanceledException)
@@ -146,6 +160,26 @@ namespace UniSwapTradingBot
 
                 log.LogInformation("Executed trade at: " + DateTime.UtcNow);
             }
+        }
+
+        static int GetTickFromPrice(decimal price)
+        {
+            // Log base sqrt(1.0001) is approximately 0.0001 / 2
+            double logBase = Math.Log(1.0001) / 2.0;
+            return (int)(Math.Log((double)price) / logBase);
+        }
+
+        static (int newTickLower, int newTickUpper) CalculateTicks(decimal currentPrice, decimal lowerTickerPercent, decimal upperTickerPercent)
+        {
+            // Calculate the price range for the lower and upper bounds
+            decimal lowerPrice = currentPrice * (1 - lowerTickerPercent / 100);
+            decimal upperPrice = currentPrice * (1 + upperTickerPercent / 100);
+
+            // Convert prices to tick values
+            int newTickLower = GetTickFromPrice(lowerPrice);
+            int newTickUpper = GetTickFromPrice(upperPrice);
+
+            return (newTickLower, newTickUpper);
         }
 
         static async Task ExecuteBuyTrade(Web3 web3, string tokenToBuyAddress, BigInteger amountToBuy, string tokenToSellAddress, BigInteger amountToSell, decimal currentPrice, ILogger log)
@@ -191,17 +225,21 @@ namespace UniSwapTradingBot
             {
                 var positionManagerService = new NonfungiblePositionManagerService(web3, UniswapV3RouterAddress);
 
+                // Calculate slippage tolerance (e.g., 2% slippage for both tokens)
+                BigInteger amount0Min = amount0 * 98 / 100; // Allow 2% slippage
+                BigInteger amount1Min = amount1 * 98 / 100; // Allow 2% slippage
+
                 tokenHash = await positionManagerService.MintPositionAsync(new MintPositionParams
                 {
                     Token0 = Token0ProxyAddress,
                     Token1 = Token1ProxyAddress,
-                    Fee = 3000, // pool fee
+                    Fee = 500, // pool fee
                     TickLower = tickLower,
                     TickUpper = tickUpper,
-                    Amount0Desired = Web3.Convert.ToWei(amount0),
-                    Amount1Desired = Web3.Convert.ToWei(amount1),
-                    Amount0Min = 1, // Setting this to 1 for simplicity, should be calculated based on slippage tolerance
-                    Amount1Min = 1, // Setting this to 1 for simplicity, should be calculated based on slippage tolerance
+                    Amount0Desired = amount0,
+                    Amount1Desired = amount1,
+                    Amount0Min = 0, // Will be set to amount0 * 0.98 to allow 2% slippage
+                    Amount1Min = 0, // Will be set to amount1 * 0.98 to allow 2% slippage
                     Recipient = WalletAddress,
                     Deadline = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 600 // 10 minutes from now
                 }).ConfigureAwait(false);

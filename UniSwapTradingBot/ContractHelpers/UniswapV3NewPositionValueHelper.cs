@@ -49,7 +49,7 @@ namespace UniSwapTradingBot.ContractHelpers
             return integral + fractionalBigInt;
         }
 
-        public static Task<(string tokenToSell, string tokenToBuy, BigInteger amountToSell, BigInteger amountToBuy, BigInteger resultingAmount0, BigInteger resultingAmount1, BigInteger totalValueInUSD)> CalculateOptimalSwapForNewPosition(
+        public static Task<(string tokenToSell, string tokenToBuy, BigInteger amountToSell, BigInteger amountToBuy)> CalculateOptimalSwapForNewPosition(
     Web3 web3,
     decimal currentPrice,
     int newTickLower,
@@ -130,7 +130,7 @@ namespace UniSwapTradingBot.ContractHelpers
                 amountToSell = 0;
             }
 
-            return Task.FromResult<(string tokenToSell, string tokenToBuy, BigInteger amountToSell, BigInteger amountToBuy, BigInteger resultingAmount0, BigInteger resultingAmount1, BigInteger totalValueInUSD)>((tokenToSell, tokenToBuy, amountToSell, amountToBuy, optimalAmount0, optimalAmount1, ConvertToBigInteger(totalValueInUSD, 2))); // Assuming 2 decimals for total USD value
+            return Task.FromResult<(string tokenToSell, string tokenToBuy, BigInteger amountToSell, BigInteger amountToBuy)>((tokenToSell, tokenToBuy, amountToSell, amountToBuy)); // Assuming 2 decimals for total USD value
         }
 
         // Helper method to convert decimal to BigInteger based on token decimals
